@@ -2,6 +2,7 @@ node_modules
 dist
 runtime
 .git
+.github
 .env
 .DS_Store
 *.log
@@ -9,5 +10,8 @@ runtime
 coverage
 outputs
 work
+docs
+README.md
+CONTEXT.md
 sample-library/**/*.nes
 sample-library/**/*.zip

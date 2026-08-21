@@ -1,14 +1,18 @@
+name: home-game-portal
+
 services:
   home-game-portal:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: home-game-portal-prototype
+    image: home-game-portal:local
     restart: unless-stopped
     init: true
+    stop_grace_period: 20s
     ports:
       - "${PORT:-8090}:8090"
     environment:
+      HOST: 0.0.0.0
       PORT: 8090
       ROM_LIBRARY_PATH: /roms
       DATA_DIR: /data
@@ -16,7 +20,7 @@ services:
       ARTWORK_DIR: /artwork
     volumes:
       - type: bind
-        source: ${ROM_LIBRARY_PATH:-./sample-library}
+        source: ${ROM_LIBRARY_HOST_PATH:-./sample-library}
         target: /roms
         read_only: true
       - portal-data:/data
@@ -24,11 +28,17 @@ services:
       - portal-artwork:/artwork
     read_only: true
     tmpfs:
-      - /tmp:size=32m,mode=1777
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cap_drop:
+      - ALL
+    pids_limit: 256
     security_opt:
       - no-new-privileges:true
 
 volumes:
   portal-data:
+    name: home-game-portal-data
   portal-saves:
+    name: home-game-portal-saves
   portal-artwork:
+    name: home-game-portal-artwork

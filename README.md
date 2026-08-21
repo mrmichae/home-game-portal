@@ -93,35 +93,82 @@ current working directory. `DATA_DIR`, `SAVES_DIR`, and `ARTWORK_DIR` are writab
 persistent state; `ROM_LIBRARY_PATH` is scanned read-only. Keep those locations
 separate in production.
 
-## Existing Docker / CasaOS-style startup
+## Docker / CasaOS-style startup
 
-The repository already contains prototype container definitions from earlier work.
-They were not created or redesigned during this release-hygiene pass. Use a path local
-to the Docker host for the bind-mounted library:
+Docker Compose builds the production client and server into one image, exposes one HTTP
+port, and runs Node as an unprivileged user with a read-only container filesystem. Copy
+the example environment file and set the ROM path to an **absolute path on the Docker
+host**:
 
 ```dotenv
-ROM_LIBRARY_PATH=/path/on/docker-host/to/roms
+ROM_LIBRARY_HOST_PATH=/path/on/docker-host/to/roms
 PORT=8090
 ```
 
-Then build and start:
+`ROM_LIBRARY_HOST_PATH` is used only for the host bind mount. Inside the container the
+application always sees that Library Source at `/roms`. Do not use a network URL or a
+path from a different computer.
+
+Validate the resolved configuration, then build and start:
 
 ```sh
-docker compose up --build -d
+cp .env.example .env
+# Edit .env before continuing.
+docker compose config
+docker compose build --pull
+docker compose up -d
 docker compose ps
 curl --fail http://127.0.0.1:8090/health
 ```
 
-The Compose definition exposes only HTTP, mounts `${ROM_LIBRARY_PATH}` at `/roms:ro`,
-stores the SQLite database in `portal-data`, synchronized states in `portal-saves`, and
-cached artwork in `portal-artwork`. It uses a read-only container root and runs Node as
-the image's unprivileged `node` user.
+The Compose definition exposes only HTTP, mounts `${ROM_LIBRARY_HOST_PATH}` at
+`/roms:ro`, stores the SQLite database in `home-game-portal-data`, synchronized states
+in `home-game-portal-saves`, and cached artwork in `home-game-portal-artwork`. It drops
+Linux capabilities, enables `no-new-privileges`, limits process creation, uses a small
+temporary filesystem, and retains the image health check.
 
 Inside Docker, `/roms` is the initial Library Source. An existing database remains
 authoritative; migration 007 moves the prototype’s former exact `/library` value to
 `/roms` for compatibility with the new mount.
 
-If the host port is already occupied, choose another `PORT` before starting Compose.
+If host port 8090 is occupied, choose another `PORT` in `.env`; the container continues
+to listen internally on 8090. Confirm that the selected port is reachable only from the
+trusted LAN. The application does not provide authentication or HTTPS.
+
+### Persistence, backup, and upgrades
+
+Image rebuilds and container replacement do not remove the three explicitly named
+volumes. Back them up before an upgrade. The following example creates gzip archives in
+an existing `./backups` directory:
+
+```sh
+mkdir -p backups
+docker run --rm -v home-game-portal-data:/source:ro -v "$PWD/backups:/backup" alpine \
+  tar -czf /backup/data.tgz -C /source .
+docker run --rm -v home-game-portal-saves:/source:ro -v "$PWD/backups:/backup" alpine \
+  tar -czf /backup/saves.tgz -C /source .
+docker run --rm -v home-game-portal-artwork:/source:ro -v "$PWD/backups:/backup" alpine \
+  tar -czf /backup/artwork.tgz -C /source .
+```
+
+The ROM Library is not included because it remains external and read-only. To upgrade:
+
+```sh
+git pull --ff-only
+docker compose build --pull
+docker compose up -d
+docker compose ps
+curl --fail http://127.0.0.1:${PORT:-8090}/health
+```
+
+SQLite migrations run at application startup. Keep the volume backups until the new
+container has passed the browser workflow and a restart. Restoring an archive overwrites
+persistent state, so stop the stack and inspect the target volume before performing a
+restore.
+
+CasaOS can import the Compose definition. Map the host's ROM directory to `/roms` as
+read-only, retain `/data`, `/saves`, and `/artwork` as persistent storage, and expose
+only the chosen host port. Do not map ROMs into a writable application directory.
 
 ## Player flow
 
