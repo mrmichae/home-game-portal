@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+runtime/
+*.log
+.DS_Store
+coverage/
+outputs/
+work/
+*.tsbuildinfo
+sample-library/**/*.nes
+sample-library/**/*.zip
