@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Home Game Portal</title>
+  <desc id="description">A red rounded portal mark with three white vertical bars.</desc>
+  <defs>
+    <filter id="shadow" x="-30%" y="-20%" width="160%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#e50914" flood-opacity="0.32" />
+    </filter>
+  </defs>
+  <g transform="translate(256 256) skewX(-5) translate(-256 -256)" filter="url(#shadow)">
+    <rect x="72" y="72" width="368" height="368" rx="92" fill="#e50914" />
+    <rect x="164" y="178" width="44" height="156" rx="22" fill="#fff" />
+    <rect x="234" y="134" width="44" height="244" rx="22" fill="#fff" />
+    <rect x="304" y="178" width="44" height="156" rx="22" fill="#fff" />
+  </g>
+</svg>
