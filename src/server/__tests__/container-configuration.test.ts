@@ -19,6 +19,7 @@ describe("container deployment contract", () => {
 
     expect(dockerfile).toContain("USER node");
     expect(dockerfile).toContain("HEALTHCHECK");
+    expect(dockerfile).toContain("COPY scripts ./scripts");
     expect(dockerfile).toContain('CMD ["node", "dist/server/index.js"]');
     expect(dockerfile).toContain("COPY --chown=node:node THIRD_PARTY_LICENSES ./THIRD_PARTY_LICENSES");
     expect(dockerfile).toContain("COPY --chown=node:node THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md");
