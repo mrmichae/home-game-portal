@@ -658,7 +658,7 @@ function toGameSummary(row: GameRow): GameSummary {
     saveUpdatedAt: row.save_updated_at,
     isFavorite: row.is_favorite === 1,
     lastPlayedAt: row.last_played_at,
-    metadataStatus: row.correction_game_id ? "corrected" : row.match_game_id ? "matched" : curated ? "curated" : "filename",
+    metadataStatus: row.correction_game_id ? "corrected" : curated ? "curated" : row.match_game_id ? "matched" : "filename",
   };
 }
 

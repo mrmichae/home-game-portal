@@ -6,6 +6,7 @@ import {
   InitialStateRestorer,
   PlaybackSaveSession,
   controllerMappingFor,
+  fetchGameFile,
   resolveFceummRuntimeFile,
   selectRuntimeProfile,
 } from "./emulator-js-adapter";
@@ -23,6 +24,25 @@ describe("FCEUmm runtime asset resolution", () => {
   it("ships a valid WebAssembly module at the resolved path", async () => {
     const wasm = await readFile(path.resolve("public/emulatorjs/cores/fceumm_libretro.wasm"));
     expect([...wasm.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+  });
+});
+
+describe("server Game File preparation", () => {
+  it("downloads and validates an iNES file before EmulatorJS starts", async () => {
+    const bytes = new Uint8Array([0x4e, 0x45, 0x53, 0x1a, ...new Array(12).fill(0), 1, 2, 3]);
+    const fetcher = vi.fn(async () => new Response(bytes));
+
+    const file = await fetchGameFile("/api/playback/files/session", new AbortController().signal, fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith("/api/playback/files/session", expect.objectContaining({ cache: "no-store" }));
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("turns an unavailable or invalid launch response into a useful player error", async () => {
+    await expect(fetchGameFile("/missing", new AbortController().signal, async () => new Response(null, { status: 404 })))
+      .rejects.toThrow("could not be read from the server");
+    await expect(fetchGameFile("/invalid", new AbortController().signal, async () => new Response(new Uint8Array([1, 2, 3]))))
+      .rejects.toThrow("valid NES game");
   });
 });
 

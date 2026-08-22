@@ -3,10 +3,12 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GameDetail } from "../../domain/types";
 import { api } from "../api";
 import { Brand, CoverArt, Spinner } from "../components";
+import { usePlayerProfile } from "../player-profile";
 
 export function DetailPage(): React.JSX.Element {
   const { gameId = "" } = useParams();
   const navigate = useNavigate();
+  const { activeProfile } = usePlayerProfile();
   const [game, setGame] = useState<GameDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -56,7 +58,7 @@ export function DetailPage(): React.JSX.Element {
           <h1>{game.displayName}</h1>
           <div className="metadata-line"><span>{game.releaseYear}</span><span>NES</span><span>{game.genres.join(" · ")}</span></div>
           <p className="game-description">{game.description}</p>
-          <div className="detail-actions"><button className="stream-button primary detail-play" onClick={play} disabled={launching} autoFocus data-controller-target>▶ {launching ? "Loading…" : game.hasServerSave ? "Continue Playing" : "Play"}</button><button className={`stream-button secondary favorite-action${game.isFavorite ? " selected" : ""}`} onClick={() => void toggleFavorite()} disabled={favoritePending} data-controller-target>{game.isFavorite ? "♥ In Favorites" : "♡ Add to Favorites"}</button></div>
+          <div className="detail-actions"><button className="stream-button primary detail-play" onClick={play} disabled={launching} autoFocus data-controller-target>▶ {launching ? "Loading…" : game.hasServerSave ? "Continue Playing" : "Play"}</button><button className={`stream-button secondary favorite-action${game.isFavorite ? " selected" : ""}`} onClick={() => void toggleFavorite()} disabled={favoritePending} data-controller-target>{game.isFavorite ? "♥ In Favorites" : "♡ Add to Favorites"}</button>{activeProfile?.isAdministrator && <Link className="stream-button secondary" to={`/admin/metadata?game=${game.id}`} data-controller-target>Edit metadata</Link>}</div>
           {actionMessage && <p className="detail-action-message" role="status">{actionMessage}</p>}
           <dl className="detail-facts"><div><dt>Platform</dt><dd>Nintendo Entertainment System</dd></div><div><dt>Released</dt><dd>{game.releaseYear}</dd></div><div><dt>Progress</dt><dd>{game.hasServerSave ? "Save ready to resume" : "New game"}</dd></div>{game.series && <div><dt>Series</dt><dd>{game.series}</dd></div>}</dl>
           <p className="privacy-note"><span>●</span> Runs privately in this browser. The library source remains read-only.</p>

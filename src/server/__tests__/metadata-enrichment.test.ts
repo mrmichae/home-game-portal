@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("automatic Metadata Match enrichment", () => {
-  it("persists provider metadata on the Game without replacing administrator corrections", () => {
+  it("keeps the original curated catalog ahead of an automatic provider match", () => {
     const database = openMemoryDatabase(path.resolve(process.cwd(), "migrations"));
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
@@ -30,10 +30,10 @@ describe("automatic Metadata Match enrichment", () => {
 
     expect(catalog.listGames()[0]).toMatchObject({
       displayName: "Castlevania",
-      releaseYear: 1986,
-      description: "A matched description.",
-      genres: ["Action", "Adventure"],
-      metadataStatus: "matched",
+      releaseYear: 1987,
+      description: "Enter Dracula's castle as Simon Belmont and fight through a landmark gothic action platformer.",
+      genres: ["Action", "Platformer"],
+      metadataStatus: "curated",
     });
     database.close();
   });

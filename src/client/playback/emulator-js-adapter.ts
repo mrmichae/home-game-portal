@@ -187,12 +187,14 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       hasSharedArrayBuffer: typeof window.SharedArrayBuffer === "function",
     });
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
-    const initialStateRequest = new AbortController();
-    const initialStatePromise = fetchInitialState(manifest.saveStateUrl, initialStateRequest.signal);
+    const startupRequest = new AbortController();
+    const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal);
+    const initialStatePromise = fetchInitialState(manifest.saveStateUrl, startupRequest.signal);
     let running = false;
     let failed = false;
     let disposed = false;
     let initialStateRestorer: InitialStateRestorer | null = null;
+    let gameFileUrl: string | null = null;
     const reportError = (message: string) => {
       if (failed || running) return;
       failed = true;
@@ -201,7 +203,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
 
     // These resolved facts remain inside the adapter; the player never chooses them.
     host.EJS_player = "#game";
-    host.EJS_gameUrl = manifest.gameUrl;
+    // Fetch the scoped server URL ourselves before starting EmulatorJS. Its internal
+    // downloader reports only "Network Error" in some reverse-proxy/container setups.
+    // A browser-local object URL gives the runtime a stable, already-validated file.
+    host.EJS_gameUrl = "";
     host.EJS_core = manifest.playbackProfile.core;
     host.EJS_gameName = manifest.gameName;
     host.EJS_gameID = Number.parseInt(manifest.gameId.slice(0, 8), 16);
@@ -291,7 +296,12 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       };
       host.EJS_Runtime = wrappedRuntime;
       try {
-        initialStateRestorer = new InitialStateRestorer(await initialStatePromise);
+        const [gameFile, initialState] = await Promise.all([gameFilePromise, initialStatePromise]);
+        gameFileUrl = URL.createObjectURL(gameFile);
+        // EmulatorJS derives a virtual filename from the URL. Preserve the platform
+        // extension in the fragment while retaining the revocable object URL.
+        host.EJS_gameUrl = `${gameFileUrl}#game.nes`;
+        initialStateRestorer = new InitialStateRestorer(initialState);
       } catch (error) {
         if (!disposed) reportError(playerMessage(error));
         return;
@@ -310,19 +320,34 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
 
     return () => {
       disposed = true;
-      initialStateRequest.abort();
+      startupRequest.abort();
       this.saveCurrentState = null;
       window.clearTimeout(timeout);
       window.removeEventListener("error", onWindowError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
       exitCoordinator.teardown(host.EJS_emulator);
       if (wrappedRuntime && host.EJS_Runtime === wrappedRuntime) delete host.EJS_Runtime;
+      if (gameFileUrl) URL.revokeObjectURL(gameFileUrl);
       runtimeScript.remove();
       loaderScript.remove();
       document.querySelectorAll("[data-ejs-loader='true']").forEach((element) => element.remove());
       document.querySelectorAll("[data-ejs-runtime='true']").forEach((element) => element.remove());
     };
   }
+}
+
+export async function fetchGameFile(
+  gameUrl: string,
+  signal: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<Blob> {
+  const response = await fetcher(gameUrl, { cache: "no-store", signal });
+  if (!response.ok) throw new Error("The game file could not be read from the server. Check the Library Source, then rescan and try again.");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength < 16 || bytes[0] !== 0x4e || bytes[1] !== 0x45 || bytes[2] !== 0x53 || bytes[3] !== 0x1a) {
+    throw new Error("The selected file is not a valid NES game. The source file was not changed.");
+  }
+  return new Blob([bytes], { type: "application/octet-stream" });
 }
 
 async function fetchInitialState(saveStateUrl: string | null, signal: AbortSignal): Promise<Uint8Array | null> {

@@ -250,11 +250,13 @@ new file appears after rescan. No ROM is checked into this repository.
   cannot make the remote appear as a standard web Gamepad.
 - The ten profile avatars are an original, generated pixel-art sprite sheet stored with
   the application. They contain no console logos or copyrighted game characters.
-- Filename parsing strips common release/region tags. On rescan, SHA-256 values are
-  matched locally against the cached Retronian NES catalog to obtain canonical titles,
-  release years, short descriptions, inferred genres, and verified box-art URLs. The
-  curated local table remains the offline fallback, and an administrator correction
-  always takes precedence without modifying a Game File.
+- Filename parsing strips common release/region tags. The original versioned, local NES
+  catalog is the preferred automatic source for its covered titles, using normalized
+  matching so punctuation and article variants resolve deterministically. On rescan,
+  SHA-256 values are also matched locally against the cached Retronian catalog for
+  artwork and as enrichment fallback for previously uncurated titles. Administrator
+  corrections always take precedence and can be opened from a Game detail page or
+  **Settings → Administration → Metadata Management** without modifying a Game File.
 - Collections and Browse Rows are household-wide administrator configuration.
   Personal row content such as Continue Playing, Favorites, and Recently Played is
   resolved separately for the active Player Profile; empty rows remain hidden.
@@ -273,6 +275,10 @@ new file appears after rescan. No ROM is checked into this repository.
   Leave-time capture uses the pinned EmulatorJS runtime's `gameManager.getState()`
   method behind the Playback Adapter; this private compatibility point must be
   reverified before upgrading EmulatorJS.
+- Before EmulatorJS starts, the web Playback Adapter downloads and validates the scoped
+  server Game File, then exposes it to the runtime through a revocable browser-local URL.
+  This avoids EmulatorJS's opaque network failure behind some container/reverse-proxy
+  deployments; the bytes still travel only from the Portal to the player's browser.
 - The in-app **Leave player** action waits for server synchronization before navigating.
   Abruptly closing or reloading the browser tab cannot reliably await an asynchronous
   save request, so the most recent earlier checkpoint remains the recovery point.
