@@ -22,6 +22,7 @@ interface RuntimeOptions {
 
 interface EmulatorGameManager {
   getState?: () => Uint8Array;
+  getFrameNum?: () => number;
   loadState?: (state: Uint8Array) => void;
 }
 
@@ -162,14 +163,60 @@ export class PlaybackSaveSession {
 
 export class InitialStateRestorer {
   private restored = false;
+  private pendingRestore: Promise<boolean> | null = null;
 
   constructor(private readonly state: Uint8Array | null) {}
 
   restore(gameManager?: EmulatorGameManager): boolean {
     if (this.restored || !this.state?.byteLength || !gameManager?.loadState) return false;
-    this.restored = true;
+    try {
+      if (!gameManager.getFrameNum || gameManager.getFrameNum() < 1) return false;
+    } catch {
+      return false;
+    }
     gameManager.loadState(this.state);
+    this.restored = true;
     return true;
+  }
+
+  restoreWhenReady(
+    getGameManager: () => EmulatorGameManager | undefined,
+    scheduleFrame: (callback: FrameRequestCallback) => number,
+    isCancelled: () => boolean = () => false,
+    maximumAttempts = 120,
+  ): Promise<boolean> {
+    if (this.restored || !this.state?.byteLength) return Promise.resolve(false);
+    if (this.pendingRestore) return this.pendingRestore;
+
+    this.pendingRestore = new Promise<boolean>((resolve, reject) => {
+      let attempts = 0;
+      const attempt = () => {
+        if (isCancelled()) {
+          this.pendingRestore = null;
+          resolve(false);
+          return;
+        }
+        try {
+          if (this.restore(getGameManager())) {
+            resolve(true);
+            return;
+          }
+        } catch (error) {
+          this.pendingRestore = null;
+          reject(error);
+          return;
+        }
+        attempts += 1;
+        if (attempts >= maximumAttempts) {
+          this.pendingRestore = null;
+          resolve(false);
+          return;
+        }
+        scheduleFrame(attempt);
+      };
+      attempt();
+    });
+    return this.pendingRestore;
   }
 }
 
@@ -245,11 +292,16 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       };
       window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true }));
       callbacks.onRunning();
-      window.setTimeout(() => {
-        if (initialStateRestorer?.restore(host.EJS_emulator?.gameManager)) {
-          callbacks.onSaveStatus("loaded");
-        }
-      }, 10);
+      void initialStateRestorer
+        ?.restoreWhenReady(
+          () => host.EJS_emulator?.gameManager,
+          window.requestAnimationFrame.bind(window),
+          () => disposed,
+        )
+        .then((restored) => {
+          if (restored) callbacks.onSaveStatus("loaded");
+        })
+        .catch(() => callbacks.onSaveStatus("error"));
     };
     host.EJS_onLoadState = () => callbacks.onSaveStatus("loaded");
     host.EJS_onSaveState = ({ state }) => {

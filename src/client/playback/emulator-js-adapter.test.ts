@@ -117,12 +117,30 @@ describe("player lifecycle", () => {
 });
 
 describe("automatic progress capture", () => {
-  it("restores the server checkpoint only once when the emulator reports start again", () => {
+  it("does not restore until the emulated core has advanced a frame", () => {
     const loadState = vi.fn();
     const restorer = new InitialStateRestorer(new Uint8Array([1, 2, 3]));
+    let currentFrame = 0;
+    const gameManager = { loadState, getFrameNum: () => currentFrame };
 
-    expect(restorer.restore({ loadState })).toBe(true);
-    expect(restorer.restore({ loadState })).toBe(false);
+    expect(restorer.restore(gameManager)).toBe(false);
+    currentFrame = 1;
+    expect(restorer.restore(gameManager)).toBe(true);
+    expect(restorer.restore(gameManager)).toBe(false);
+    expect(loadState).toHaveBeenCalledOnce();
+  });
+
+  it("retries on animation frames until the core is ready, then restores once", async () => {
+    const loadState = vi.fn();
+    const frameNumbers = [0, 0, 3];
+    const gameManager = { loadState, getFrameNum: () => frameNumbers.shift() ?? 3 };
+    const scheduleFrame = (callback: FrameRequestCallback) => {
+      queueMicrotask(() => callback(0));
+      return 1;
+    };
+    const restorer = new InitialStateRestorer(new Uint8Array([1, 2, 3]));
+
+    await expect(restorer.restoreWhenReady(() => gameManager, scheduleFrame)).resolves.toBe(true);
     expect(loadState).toHaveBeenCalledOnce();
   });
 
