@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import type { LaunchManifest } from "../domain/types.js";
 import type { CatalogRepository } from "./catalog-repository.js";
 import { assertRealPathWithinRoot, resolveLibraryPath } from "./path-security.js";
@@ -28,6 +28,7 @@ export class PlaybackResolver {
       realpathSync(this.catalog.getLibraryRoot()),
       realpathSync(absolutePath),
     );
+    assertNesCartridge(absolutePath);
 
     this.prune(now);
     const sessionId = randomBytes(24).toString("base64url");
@@ -72,5 +73,18 @@ export class PlaybackResolver {
     for (const [sessionId, session] of this.sessions) {
       if (session.expiresAt <= now) this.sessions.delete(sessionId);
     }
+  }
+}
+
+function assertNesCartridge(absolutePath: string): void {
+  const header = Buffer.alloc(4);
+  const descriptor = openSync(absolutePath, "r");
+  try {
+    if (readSync(descriptor, header, 0, header.byteLength, 0) !== header.byteLength
+      || !header.equals(Buffer.from([0x4e, 0x45, 0x53, 0x1a]))) {
+      throw new Error("The selected file is not a valid NES game. Rescan the Library Source and try again.");
+    }
+  } finally {
+    closeSync(descriptor);
   }
 }

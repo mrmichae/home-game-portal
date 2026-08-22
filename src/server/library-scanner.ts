@@ -24,6 +24,9 @@ async function visitDirectory(
   const entries = await readdir(absoluteDirectory, { withFileTypes: true });
 
   for (const entry of entries) {
+    // Finder and archive tools can leave AppleDouble resource forks beside ROMs.
+    // They may end in .nes, but they are filesystem metadata rather than games.
+    if (entry.name.startsWith("._") || entry.name === "__MACOSX") continue;
     const relativePath = path.posix.join(
       relativeDirectory.split(path.sep).join(path.posix.sep),
       entry.name,

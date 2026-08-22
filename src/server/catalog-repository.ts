@@ -202,6 +202,10 @@ export class CatalogRepository {
             FROM editions
             JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
             WHERE editions.game_id = ? AND editions.active = 1
+              AND game_files.relative_path NOT LIKE '._%'
+              AND game_files.relative_path NOT LIKE '%/._%'
+              AND game_files.relative_path NOT LIKE '__MACOSX/%'
+              AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
             ORDER BY game_files.relative_path COLLATE NOCASE, editions.id
             LIMIT 1
           )
@@ -307,7 +311,14 @@ export class CatalogRepository {
          JOIN editions ON editions.id = (
            SELECT candidate.id FROM editions AS candidate
            WHERE candidate.game_id = games.id AND candidate.active = 1
-             AND EXISTS (SELECT 1 FROM game_files AS candidate_file WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1)
+             AND EXISTS (
+               SELECT 1 FROM game_files AS candidate_file
+               WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1
+                 AND candidate_file.relative_path NOT LIKE '._%'
+                 AND candidate_file.relative_path NOT LIKE '%/._%'
+                 AND candidate_file.relative_path NOT LIKE '__MACOSX/%'
+                 AND candidate_file.relative_path NOT LIKE '%/__MACOSX/%'
+             )
            ORDER BY (
              SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
              WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
@@ -315,6 +326,10 @@ export class CatalogRepository {
            LIMIT 1
          )
          JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
+           AND game_files.relative_path NOT LIKE '._%'
+           AND game_files.relative_path NOT LIKE '%/._%'
+           AND game_files.relative_path NOT LIKE '__MACOSX/%'
+           AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
          LEFT JOIN saves ON saves.edition_id = editions.id
            AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
@@ -368,7 +383,14 @@ export class CatalogRepository {
          JOIN editions ON editions.id = (
            SELECT candidate.id FROM editions AS candidate
            WHERE candidate.game_id = games.id AND candidate.active = 1
-             AND EXISTS (SELECT 1 FROM game_files AS candidate_file WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1)
+             AND EXISTS (
+               SELECT 1 FROM game_files AS candidate_file
+               WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1
+                 AND candidate_file.relative_path NOT LIKE '._%'
+                 AND candidate_file.relative_path NOT LIKE '%/._%'
+                 AND candidate_file.relative_path NOT LIKE '__MACOSX/%'
+                 AND candidate_file.relative_path NOT LIKE '%/__MACOSX/%'
+             )
            ORDER BY (
              SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
              WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
@@ -376,6 +398,10 @@ export class CatalogRepository {
            LIMIT 1
          )
          JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
+           AND game_files.relative_path NOT LIKE '._%'
+           AND game_files.relative_path NOT LIKE '%/._%'
+           AND game_files.relative_path NOT LIKE '__MACOSX/%'
+           AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
          LEFT JOIN saves ON saves.edition_id = editions.id
            AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
@@ -398,6 +424,10 @@ export class CatalogRepository {
          JOIN game_files ON game_files.edition_id = editions.id
            AND game_files.active = 1
          WHERE games.id = ? AND games.active = 1
+           AND game_files.relative_path NOT LIKE '._%'
+           AND game_files.relative_path NOT LIKE '%/._%'
+           AND game_files.relative_path NOT LIKE '__MACOSX/%'
+           AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
          ORDER BY (
            SELECT MAX(saves.updated_at) FROM saves
            WHERE saves.edition_id = editions.id AND saves.player_key = ? AND saves.kind = 'state'

@@ -16,6 +16,21 @@ afterEach(async () => {
 });
 
 describe("Household library persistence", () => {
+  it("does not select a legacy AppleDouble sidecar as the preferred game file", () => {
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource("/roms");
+    catalog.commitScan([
+      { relativePath: "._Beetlejuice.nes", displayName: "Beetlejuice", contentHash: "sidecar", byteSize: 4_096, modifiedAtMs: 2 },
+      { relativePath: "Beetlejuice.nes", displayName: "Beetlejuice", contentHash: "game", byteSize: 131_088, modifiedAtMs: 1 },
+    ]);
+
+    const game = catalog.listGames()[0];
+    expect(catalog.getPreferredGameFile(game.id)).toBe("Beetlejuice.nes");
+    expect(game.byteSize).toBe(131_088);
+    database.close();
+  });
+
   it("models differently hashed copies of one normalized title as Editions of one Game", () => {
     const database = openMemoryDatabase(migrationsDir);
     const catalog = new CatalogRepository(database);
