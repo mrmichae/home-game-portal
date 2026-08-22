@@ -75,7 +75,7 @@ export interface GameSummary {
   saveUpdatedAt: string | null;
   isFavorite: boolean;
   lastPlayedAt: string | null;
-  metadataStatus: "curated" | "filename" | "corrected";
+  metadataStatus: "curated" | "filename" | "matched" | "corrected";
 }
 
 export interface GameDetail extends GameSummary {

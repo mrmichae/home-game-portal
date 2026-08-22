@@ -11,6 +11,7 @@ import { ArtworkStore } from "./artwork-store.js";
 import { PortalConfiguration } from "./portal-configuration.js";
 import { PortalPresentation } from "./portal-presentation.js";
 import type { BrowseRowInput, CollectionInput, MetadataCorrectionInput, ScanStatus } from "../domain/types.js";
+import { RetronianMetadataProvider } from "./metadata-provider.js";
 
 export interface PortalApplication {
   app: Express;
@@ -22,7 +23,11 @@ export interface PortalApplication {
   close: () => void;
 }
 
-export function createPortalApplication(config: AppConfig): PortalApplication {
+interface PortalApplicationDependencies {
+  metadataProvider?: Pick<RetronianMetadataProvider, "match">;
+}
+
+export function createPortalApplication(config: AppConfig, dependencies: PortalApplicationDependencies = {}): PortalApplication {
   const database = openDatabase(config.dataDir, config.migrationsDir);
   const catalog = new CatalogRepository(database);
   const configuration = new PortalConfiguration(catalog, config.defaultLibraryRoot);
@@ -31,6 +36,7 @@ export function createPortalApplication(config: AppConfig): PortalApplication {
   const playbackResolver = new PlaybackResolver(catalog);
   const saveStore = new SaveStore(config.savesDir, catalog);
   const artworkStore = new ArtworkStore(config.artworkDir, catalog);
+  const metadataProvider = dependencies.metadataProvider ?? new RetronianMetadataProvider(path.join(config.dataDir, "metadata"));
   const app = express();
   let scanState: ScanStatus = { status: "idle", lastScannedAt: catalog.getLibrarySource().lastScannedAt, message: null };
   let activeScan: Promise<ScanCommitResult> | null = null;
@@ -40,8 +46,12 @@ export function createPortalApplication(config: AppConfig): PortalApplication {
     scanState = { ...scanState, status: "scanning", message: null };
     const libraryRoot = catalog.getLibraryRoot();
     activeScan = scanNesLibrary(libraryRoot)
-      .then((files) => {
-        const result = catalog.commitScan(files);
+      .then(async (files) => {
+        const matches = await metadataProvider.match(files).catch((error: unknown) => {
+          console.warn("[Home Game Portal] Metadata enrichment skipped; the library scan will continue.", error);
+          return [];
+        });
+        const result = catalog.commitScan(files, new Date(), matches);
         scanState = {
           status: "idle",
           lastScannedAt: new Date().toISOString(),

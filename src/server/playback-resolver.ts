@@ -19,7 +19,7 @@ export class PlaybackResolver {
 
   resolve(gameId: string, now = Date.now(), playerKey = "household"): LaunchManifest {
     const game = this.catalog.getGame(gameId, playerKey);
-    const relativePath = this.catalog.getPreferredGameFile(gameId);
+    const relativePath = this.catalog.getPreferredGameFile(gameId, playerKey);
     if (!game || !relativePath) throw new Error("Game not found.");
 
     const absolutePath = resolveLibraryPath(this.catalog.getLibraryRoot(), relativePath);

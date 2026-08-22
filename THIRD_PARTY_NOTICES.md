@@ -8,6 +8,10 @@ does not need the public CDN at runtime.
 - FCEUmm libretro core, distributed by the EmulatorJS 4.2.3 release: GPL-2.0.
   Source: <https://github.com/libretro/libretro-fceumm>.
   License: `THIRD_PARTY_LICENSES/FCEUmm-GPL-2.0.txt`.
+- Retronian GameDB: <https://github.com/retronian/retronian-gamedb>. The application
+  downloads its Famicom/NES JSON catalog at runtime for local Metadata Matching. Data is
+  CC BY-SA 4.0; code is MIT. The catalog is cached in persistent application data and is
+  not distributed in this repository or container image.
 
 Vendored asset SHA-256 checksums:
 

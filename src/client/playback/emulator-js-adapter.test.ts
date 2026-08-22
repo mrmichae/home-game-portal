@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   PlaybackExitCoordinator,
+  InitialStateRestorer,
   PlaybackSaveSession,
   controllerMappingFor,
   resolveFceummRuntimeFile,
@@ -96,6 +97,15 @@ describe("player lifecycle", () => {
 });
 
 describe("automatic progress capture", () => {
+  it("restores the server checkpoint only once when the emulator reports start again", () => {
+    const loadState = vi.fn();
+    const restorer = new InitialStateRestorer(new Uint8Array([1, 2, 3]));
+
+    expect(restorer.restore({ loadState })).toBe(true);
+    expect(restorer.restore({ loadState })).toBe(false);
+    expect(loadState).toHaveBeenCalledOnce();
+  });
+
   it("waits for server persistence and reports a completed save", async () => {
     const order: string[] = [];
     const session = new PlaybackSaveSession(async (state) => {

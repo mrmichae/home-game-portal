@@ -20,6 +20,11 @@ interface RuntimeOptions {
   [key: string]: unknown;
 }
 
+interface EmulatorGameManager {
+  getState?: () => Uint8Array;
+  loadState?: (state: Uint8Array) => void;
+}
+
 interface EmulatorWindow extends Window {
   EJS_player?: string;
   EJS_gameUrl?: string;
@@ -48,9 +53,7 @@ interface EmulatorWindow extends Window {
   EJS_onExit?: () => void;
   EJS_emulator?: {
     callEvent?: (event: string) => void;
-    gameManager?: {
-      getState?: () => Uint8Array;
-    };
+    gameManager?: EmulatorGameManager;
   };
   EJS_Runtime?: (options?: RuntimeOptions) => unknown;
 }
@@ -157,6 +160,19 @@ export class PlaybackSaveSession {
   }
 }
 
+export class InitialStateRestorer {
+  private restored = false;
+
+  constructor(private readonly state: Uint8Array | null) {}
+
+  restore(gameManager?: EmulatorGameManager): boolean {
+    if (this.restored || !this.state?.byteLength || !gameManager?.loadState) return false;
+    this.restored = true;
+    gameManager.loadState(this.state);
+    return true;
+  }
+}
+
 export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
   private saveCurrentState: (() => Promise<void>) | null = null;
 
@@ -171,8 +187,12 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       hasSharedArrayBuffer: typeof window.SharedArrayBuffer === "function",
     });
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
+    const initialStateRequest = new AbortController();
+    const initialStatePromise = fetchInitialState(manifest.saveStateUrl, initialStateRequest.signal);
     let running = false;
     let failed = false;
+    let disposed = false;
+    let initialStateRestorer: InitialStateRestorer | null = null;
     const reportError = (message: string) => {
       if (failed || running) return;
       failed = true;
@@ -195,7 +215,9 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_backgroundColor = "#0b0c0f";
     host.EJS_color = "#e5222d";
     host.EJS_startButtonName = `Start ${manifest.gameName}`;
-    host.EJS_loadStateURL = manifest.saveStateUrl ?? "";
+    // EmulatorJS registers EJS_loadStateURL with a repeatable `start` listener.
+    // Own restoration here so a later runtime start event cannot rewind gameplay.
+    host.EJS_loadStateURL = "";
     host.EJS_defaultOptions = { "save-state-location": "browser" };
     host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset);
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
@@ -218,6 +240,11 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       };
       window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true }));
       callbacks.onRunning();
+      window.setTimeout(() => {
+        if (initialStateRestorer?.restore(host.EJS_emulator?.gameManager)) {
+          callbacks.onSaveStatus("loaded");
+        }
+      }, 10);
     };
     host.EJS_onLoadState = () => callbacks.onSaveStatus("loaded");
     host.EJS_onSaveState = ({ state }) => {
@@ -248,7 +275,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     loaderScript.dataset.ejsLoader = "true";
     loaderScript.onerror = () => reportError("The game player could not be loaded.");
     let wrappedRuntime: EmulatorWindow["EJS_Runtime"];
-    runtimeScript.onload = () => {
+    runtimeScript.onload = async () => {
       const upstreamRuntime = host.EJS_Runtime;
       if (!upstreamRuntime) {
         reportError("The NES player could not be loaded.");
@@ -263,6 +290,13 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         });
       };
       host.EJS_Runtime = wrappedRuntime;
+      try {
+        initialStateRestorer = new InitialStateRestorer(await initialStatePromise);
+      } catch (error) {
+        if (!disposed) reportError(playerMessage(error));
+        return;
+      }
+      if (disposed) return;
       document.body.appendChild(loaderScript);
     };
     runtimeScript.onerror = () => reportError("The NES player could not be loaded.");
@@ -275,6 +309,8 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     }, 30_000);
 
     return () => {
+      disposed = true;
+      initialStateRequest.abort();
       this.saveCurrentState = null;
       window.clearTimeout(timeout);
       window.removeEventListener("error", onWindowError);
@@ -287,6 +323,15 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       document.querySelectorAll("[data-ejs-runtime='true']").forEach((element) => element.remove());
     };
   }
+}
+
+async function fetchInitialState(saveStateUrl: string | null, signal: AbortSignal): Promise<Uint8Array | null> {
+  if (!saveStateUrl) return null;
+  const response = await fetch(saveStateUrl, { cache: "no-store", signal });
+  if (!response.ok) throw new Error("Saved progress could not be loaded. Remove it from Continue Playing to start fresh.");
+  const state = new Uint8Array(await response.arrayBuffer());
+  if (!state.byteLength) throw new Error("Saved progress is empty. Remove it from Continue Playing to start fresh.");
+  return state;
 }
 
 export function resolveFceummRuntimeFile(

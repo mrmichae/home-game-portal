@@ -94,9 +94,10 @@ export function SettingsPage(): React.JSX.Element {
       const refreshed = await api.administrationSettings();
       setAdministration(refreshed);
       setAdministrationStatusKind("success");
-      setAdministrationStatus(result.added > 0
-        ? `Scan complete. ${result.added} new ${result.added === 1 ? "game" : "games"} added.`
-        : `Scan complete. ${result.discovered} ${result.discovered === 1 ? "game" : "games"} discovered.`);
+      const catalogMessage = result.added > 0
+        ? `${result.added} new ${result.added === 1 ? "file" : "files"} added.`
+        : `${result.discovered} ${result.discovered === 1 ? "file" : "files"} discovered.`;
+      setAdministrationStatus(`Scan complete. ${catalogMessage} Metadata matched for ${result.metadataMatched} ${result.metadataMatched === 1 ? "title" : "titles"}.`);
     } catch (error) {
       setAdministrationStatusKind("error");
       setAdministrationStatus(error instanceof Error ? error.message : "The ROM Library could not be scanned.");

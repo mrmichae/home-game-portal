@@ -46,7 +46,7 @@ export const api = {
   updateLibraryRoot: (rootPath: string) => request<{ library: LibrarySourceConfiguration }>("/api/admin/library", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rootPath }) }),
   catalog: () => request<CatalogResponse>("/api/catalog"),
   rescan: () =>
-    request<{ discovered: number; added: number; scannedAt: string }>("/api/admin/rescan", {
+    request<{ discovered: number; added: number; metadataMatched: number; scannedAt: string }>("/api/admin/rescan", {
       method: "POST",
     }),
   game: (gameId: string) => request<{ game: GameDetail }>(`/api/games/${gameId}`),

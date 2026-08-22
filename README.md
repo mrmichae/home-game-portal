@@ -12,6 +12,8 @@ emulator choice is required.
 ## What works
 
 - Recursive, read-only discovery of `.nes` files, with content hashes and filename-based titles.
+  Differently hashed files with the same normalized title are retained as Editions of one Game
+  rather than rendered as duplicate Shelf entries.
 - A persistent **Settings → Library** location with server-side directory/readability
   validation and administrator-controlled rescans.
 - SQLite Catalog with explicit migrations and stable Game/Edition/Game File vocabulary.
@@ -36,8 +38,8 @@ emulator choice is required.
   confirmation that also deletes the Save.
 - A Featured title that stays stable while a player browses and rotates whenever a
   Player Profile is selected again.
-- Administrator Metadata Match corrections that survive rescans, plus a persistent,
-  same-origin artwork cache.
+- Automatic SHA-256 Metadata Matches against a locally cached public NES catalog, with
+  administrator corrections that survive rescans and a persistent same-origin artwork cache.
 - An **Administration** area that keeps Metadata Management intact and displays
   platform-level Emulator Profiles for NES, SNES, and Atari 2600.
 - One-click detail-to-play flow. The Playback Resolver silently selects FCEUmm for NES.
@@ -202,7 +204,9 @@ before the catalog renders again.
 
 The portal never writes to, renames, deletes, or sends a source game to an external
 service. The browser downloads game bytes from this portal because emulation runs in
-the browser; nothing is uploaded to EmulatorJS or a metadata provider.
+the browser. For enrichment, the server downloads the public Retronian NES catalog to
+`DATA_DIR/metadata` and performs hash comparisons locally; ROM bytes, filenames, and
+hashes are not uploaded to Retronian, EmulatorJS, or another metadata provider.
 
 ## Verification
 
@@ -246,9 +250,11 @@ new file appears after rescan. No ROM is checked into this repository.
   cannot make the remote appear as a standard web Gamepad.
 - The ten profile avatars are an original, generated pixel-art sprite sheet stored with
   the application. They contain no console logos or copyrighted game characters.
-- Filename parsing strips common release/region tags. Release years, descriptions,
-  Series, and universe memberships begin with a curated local table; an
-  administrator can correct presentation metadata without modifying a Game File.
+- Filename parsing strips common release/region tags. On rescan, SHA-256 values are
+  matched locally against the cached Retronian NES catalog to obtain canonical titles,
+  release years, short descriptions, inferred genres, and verified box-art URLs. The
+  curated local table remains the offline fallback, and an administrator correction
+  always takes precedence without modifying a Game File.
 - Collections and Browse Rows are household-wide administrator configuration.
   Personal row content such as Continue Playing, Favorites, and Recently Played is
   resolved separately for the active Player Profile; empty rows remain hidden.
@@ -259,7 +265,10 @@ new file appears after rescan. No ROM is checked into this repository.
 - Artwork is fetched from its configured HTTPS source on first request and cached in
   `ARTWORK_DIR`. If a cache fetch fails, the endpoint temporarily redirects to the
   source, so uncached art can still require internet access.
-- There is no automatic metadata provider search, archive scanning, or firmware handling.
+- The first metadata-enabled scan downloads roughly 6 MB from Retronian and caches it in
+  `DATA_DIR/metadata`. If that download is unavailable, scanning still succeeds with the
+  local fallback; a later rescan retries. Archive scanning and firmware handling remain
+  out of scope.
 - Server persistence covers checkpoints created by **Leave player** and **Save State**.
   Leave-time capture uses the pinned EmulatorJS runtime's `gameManager.getState()`
   method behind the Playback Adapter; this private compatibility point must be
@@ -317,14 +326,14 @@ The `/artwork` volume is now implemented for the persistent artwork cache. `/fir
 remains omitted because this NES-only slice does not use firmware.
 
 The original no-metadata-provider constraint was intentionally superseded by later
-  product iterations: current-library descriptions and release years are bundled, and
-reviewed HTTPS artwork is cached locally on first access. This keeps Game Files private
-and creates the persistence seam for a future provider-backed Metadata Match workflow.
+product iterations. Retronian metadata is downloaded and cached server-side, matching
+occurs locally, and reviewed HTTPS artwork is cached on first access. This keeps Game
+Files and their identifiers private while making newly discovered titles enrichable.
 
 Milestone 2 is complete for the current application: search, Collections, Favorites, Play
 Sessions, selectable Player Profiles, profile-scoped Saves and appearance, administrator
-Metadata Match corrections, and persistent artwork caching are functional. Profile
-authentication and automated provider matching remain hardening/future-scope work.
+Metadata Match corrections, automatic provider matching, and persistent artwork caching
+are functional. Profile authentication remains hardening/future-scope work.
 
 This iteration adds the server-configuration and Emulator Profile foundation for
 Milestone 3. It does not claim full Milestone 3 completion: additional Platform scanners,

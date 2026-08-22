@@ -29,7 +29,7 @@ describe("Administration Settings application interface", () => {
       migrationsDir: path.resolve("migrations"),
       publicDir: path.join(root, "public-missing"),
       clientDir: path.join(root, "client-missing"),
-    });
+    }, { metadataProvider: { match: async () => [] } });
     expect(() => portal.configuration.updateLibraryRoot(path.join(root, "missing"))).toThrow("does not exist");
     expect(portal.catalog.getLibraryRoot()).toBe(initialLibrary);
 
@@ -51,7 +51,7 @@ describe("Administration Settings application interface", () => {
       migrationsDir: path.resolve("migrations"),
       publicDir: path.join(root, "public-missing"),
       clientDir: path.join(root, "client-missing"),
-    });
+    }, { metadataProvider: { match: async () => [] } });
     expect(restarted.catalog.getLibraryRoot()).toBe(nextLibrary);
     restarted.close();
   });

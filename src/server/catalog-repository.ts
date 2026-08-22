@@ -13,6 +13,7 @@ import type { PortalDatabase } from "./database.js";
 import { hasCuratedMetadata, metadataForGame } from "./nes-metadata.js";
 import { isProfileAvatarKey, profileAvatarChoice, type ProfileAvatarKey } from "../domain/profile-avatars.js";
 import { platforms } from "../domain/platforms.js";
+import type { MetadataMatch } from "./metadata-provider.js";
 
 const SOURCE_ID = 1;
 export const DEFAULT_PLAYER_KEY = "household";
@@ -38,6 +39,13 @@ interface GameRow {
   corrected_series_name: string | null;
   corrected_cover_url: string | null;
   corrected_updated_at: string | null;
+  match_game_id: string | null;
+  matched_display_name: string | null;
+  matched_release_year: number | null;
+  matched_description: string | null;
+  matched_genres_json: string | null;
+  matched_series_name: string | null;
+  matched_cover_url: string | null;
 }
 
 interface FileRow {
@@ -47,6 +55,7 @@ interface FileRow {
 export interface ScanCommitResult {
   discovered: number;
   added: number;
+  metadataMatched: number;
 }
 
 export interface LibrarySourceRecord {
@@ -83,7 +92,7 @@ export class CatalogRepository {
     if (result.changes === 0) throw new Error("Library Source is not configured.");
   }
 
-  commitScan(files: DiscoveredGameFile[], scannedAt = new Date()): ScanCommitResult {
+  commitScan(files: DiscoveredGameFile[], scannedAt = new Date(), metadataMatches: MetadataMatch[] = []): ScanCommitResult {
     const now = scannedAt.toISOString();
     const existingStatement = this.database.prepare(
       "SELECT 1 FROM game_files WHERE library_source_id = ? AND relative_path = ?",
@@ -99,7 +108,7 @@ export class CatalogRepository {
     const upsertEdition = this.database.prepare(`
       INSERT INTO editions(id, game_id, platform_key, preferred, active)
       VALUES (?, ?, 'nes', 1, 1)
-      ON CONFLICT(id) DO UPDATE SET active = 1
+      ON CONFLICT(id) DO UPDATE SET game_id = excluded.game_id, active = 1
     `);
     const upsertFile = this.database.prepare(`
       INSERT INTO game_files(
@@ -115,6 +124,10 @@ export class CatalogRepository {
     `);
 
     let added = 0;
+    const previousGameIds = new Map<string, string>();
+    const groupedGameIds = new Set<string>();
+    const matchesByHash = new Map(metadataMatches.map((match) => [match.contentHash, match]));
+    const matchedGameIds = new Set<string>();
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.database
@@ -123,10 +136,24 @@ export class CatalogRepository {
 
       for (const file of files) {
         if (!existingStatement.get(SOURCE_ID, file.relativePath)) added += 1;
-        const gameId = stableId("game", file.contentHash);
+        const prior = this.database.prepare(`
+          SELECT editions.game_id, games.added_at
+          FROM game_files
+          JOIN editions ON editions.id = game_files.edition_id
+          JOIN games ON games.id = editions.game_id
+          WHERE game_files.library_source_id = ? AND game_files.relative_path = ?
+        `).get(SOURCE_ID, file.relativePath) as unknown as { game_id: string; added_at: string } | undefined;
+        const gameId = stableId("game", `nes\0${gameIdentityKey(file.displayName)}`);
         const editionId = stableId("edition", file.contentHash);
         const fileId = stableId("file", `${SOURCE_ID}\0${file.relativePath}`);
         upsertGame.run(gameId, file.displayName, now, now);
+        groupedGameIds.add(gameId);
+        if (prior && prior.game_id !== gameId) {
+          previousGameIds.set(prior.game_id, gameId);
+          this.database.prepare(`
+            UPDATE games SET added_at = CASE WHEN added_at > ? THEN ? ELSE added_at END WHERE id = ?
+          `).run(prior.added_at, prior.added_at, gameId);
+        }
         upsertEdition.run(editionId, gameId);
         upsertFile.run(
           fileId,
@@ -137,6 +164,48 @@ export class CatalogRepository {
           file.byteSize,
           file.modifiedAtMs,
         );
+        const metadataMatch = matchesByHash.get(file.contentHash);
+        if (metadataMatch) {
+          this.database.prepare(`
+            INSERT INTO metadata_matches(
+              game_id, provider_key, provider_game_id, display_name, release_year,
+              description, genres_json, series_name, cover_url, matched_at
+            ) VALUES (?, 'retronian', ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(game_id) DO UPDATE SET
+              provider_key = excluded.provider_key,
+              provider_game_id = excluded.provider_game_id,
+              display_name = excluded.display_name,
+              release_year = excluded.release_year,
+              description = excluded.description,
+              genres_json = excluded.genres_json,
+              series_name = excluded.series_name,
+              cover_url = excluded.cover_url,
+              matched_at = excluded.matched_at
+          `).run(
+            gameId, metadataMatch.canonicalId, metadataMatch.displayName, metadataMatch.releaseYear,
+            metadataMatch.description, JSON.stringify(metadataMatch.genres), metadataMatch.series,
+            metadataMatch.coverUrl, now,
+          );
+          matchedGameIds.add(gameId);
+        }
+      }
+
+      for (const [previousGameId, groupedGameId] of previousGameIds) {
+        this.mergeGameRelationships(previousGameId, groupedGameId);
+      }
+
+      for (const gameId of groupedGameIds) {
+        this.database.prepare("UPDATE editions SET preferred = 0 WHERE game_id = ?").run(gameId);
+        this.database.prepare(`
+          UPDATE editions SET preferred = 1 WHERE id = (
+            SELECT editions.id
+            FROM editions
+            JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
+            WHERE editions.game_id = ? AND editions.active = 1
+            ORDER BY game_files.relative_path COLLATE NOCASE, editions.id
+            LIMIT 1
+          )
+        `).run(gameId);
       }
 
       this.database.exec(`
@@ -151,6 +220,10 @@ export class CatalogRepository {
           SELECT 1 FROM editions
           WHERE editions.game_id = games.id AND editions.active = 1
         ) THEN 1 ELSE 0 END;
+
+        DELETE FROM games
+        WHERE active = 0
+          AND NOT EXISTS (SELECT 1 FROM editions WHERE editions.game_id = games.id);
       `);
       this.database
         .prepare("UPDATE library_sources SET last_scanned_at = ? WHERE id = ?")
@@ -161,7 +234,36 @@ export class CatalogRepository {
       throw error;
     }
 
-    return { discovered: files.length, added };
+    return { discovered: files.length, added, metadataMatched: matchedGameIds.size };
+  }
+
+  private mergeGameRelationships(previousGameId: string, groupedGameId: string): void {
+    this.database.prepare(`
+      INSERT OR IGNORE INTO favorites(game_id, player_key, created_at)
+      SELECT ?, player_key, created_at FROM favorites WHERE game_id = ?
+    `).run(groupedGameId, previousGameId);
+    this.database.prepare("DELETE FROM favorites WHERE game_id = ?").run(previousGameId);
+    this.database.prepare(`
+      INSERT OR IGNORE INTO metadata_corrections(
+        game_id, display_name, release_year, description, genres_json, series_name, cover_url, updated_at
+      ) SELECT ?, display_name, release_year, description, genres_json, series_name, cover_url, updated_at
+        FROM metadata_corrections WHERE game_id = ?
+    `).run(groupedGameId, previousGameId);
+    this.database.prepare("DELETE FROM metadata_corrections WHERE game_id = ?").run(previousGameId);
+    this.database.prepare(`
+      INSERT OR IGNORE INTO metadata_matches(
+        game_id, provider_key, provider_game_id, display_name, release_year,
+        description, genres_json, series_name, cover_url, matched_at
+      ) SELECT ?, provider_key, provider_game_id, display_name, release_year,
+          description, genres_json, series_name, cover_url, matched_at
+        FROM metadata_matches WHERE game_id = ?
+    `).run(groupedGameId, previousGameId);
+    this.database.prepare("DELETE FROM metadata_matches WHERE game_id = ?").run(previousGameId);
+    this.database.prepare(`
+      INSERT OR IGNORE INTO collection_games(collection_id, game_id, position)
+      SELECT collection_id, ?, position FROM collection_games WHERE game_id = ?
+    `).run(groupedGameId, previousGameId);
+    this.database.prepare("DELETE FROM collection_games WHERE game_id = ?").run(previousGameId);
   }
 
   listGames(playerKey = DEFAULT_PLAYER_KEY): GameSummary[] {
@@ -194,17 +296,34 @@ export class CatalogRepository {
            , metadata_corrections.series_name AS corrected_series_name
            , metadata_corrections.cover_url AS corrected_cover_url
            , metadata_corrections.updated_at AS corrected_updated_at
+           , metadata_matches.game_id AS match_game_id
+           , metadata_matches.display_name AS matched_display_name
+           , metadata_matches.release_year AS matched_release_year
+           , metadata_matches.description AS matched_description
+           , metadata_matches.genres_json AS matched_genres_json
+           , metadata_matches.series_name AS matched_series_name
+           , metadata_matches.cover_url AS matched_cover_url
          FROM games
-         JOIN editions ON editions.game_id = games.id AND editions.active = 1
+         JOIN editions ON editions.id = (
+           SELECT candidate.id FROM editions AS candidate
+           WHERE candidate.game_id = games.id AND candidate.active = 1
+             AND EXISTS (SELECT 1 FROM game_files AS candidate_file WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1)
+           ORDER BY (
+             SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
+             WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
+           ) DESC, candidate.preferred DESC, candidate.id
+           LIMIT 1
+         )
          JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
          LEFT JOIN saves ON saves.edition_id = editions.id
            AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
+         LEFT JOIN metadata_matches ON metadata_matches.game_id = games.id
          WHERE games.active = 1
          GROUP BY games.id, editions.id, saves.updated_at
          ORDER BY games.display_name COLLATE NOCASE`,
       )
-      .all(playerKey, playerKey, playerKey) as unknown as GameRow[];
+      .all(playerKey, playerKey, playerKey, playerKey) as unknown as GameRow[];
     return rows.map(toGameSummary);
   }
 
@@ -238,34 +357,54 @@ export class CatalogRepository {
            , metadata_corrections.series_name AS corrected_series_name
            , metadata_corrections.cover_url AS corrected_cover_url
            , metadata_corrections.updated_at AS corrected_updated_at
+           , metadata_matches.game_id AS match_game_id
+           , metadata_matches.display_name AS matched_display_name
+           , metadata_matches.release_year AS matched_release_year
+           , metadata_matches.description AS matched_description
+           , metadata_matches.genres_json AS matched_genres_json
+           , metadata_matches.series_name AS matched_series_name
+           , metadata_matches.cover_url AS matched_cover_url
          FROM games
-         JOIN editions ON editions.game_id = games.id AND editions.active = 1
+         JOIN editions ON editions.id = (
+           SELECT candidate.id FROM editions AS candidate
+           WHERE candidate.game_id = games.id AND candidate.active = 1
+             AND EXISTS (SELECT 1 FROM game_files AS candidate_file WHERE candidate_file.edition_id = candidate.id AND candidate_file.active = 1)
+           ORDER BY (
+             SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
+             WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
+           ) DESC, candidate.preferred DESC, candidate.id
+           LIMIT 1
+         )
          JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
          LEFT JOIN saves ON saves.edition_id = editions.id
            AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
+         LEFT JOIN metadata_matches ON metadata_matches.game_id = games.id
          WHERE games.id = ? AND games.active = 1
          GROUP BY games.id, editions.id, saves.updated_at`,
       )
-      .get(playerKey, playerKey, playerKey, gameId) as unknown as GameRow | undefined;
+      .get(playerKey, playerKey, playerKey, playerKey, gameId) as unknown as GameRow | undefined;
     if (!row) return null;
-    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl };
+    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl };
   }
 
-  getPreferredGameFile(gameId: string): string | null {
+  getPreferredGameFile(gameId: string, playerKey = DEFAULT_PLAYER_KEY): string | null {
     const row = this.database
       .prepare(
         `SELECT game_files.relative_path
          FROM games
          JOIN editions ON editions.game_id = games.id
-           AND editions.preferred = 1 AND editions.active = 1
+           AND editions.active = 1
          JOIN game_files ON game_files.edition_id = editions.id
            AND game_files.active = 1
          WHERE games.id = ? AND games.active = 1
-         ORDER BY game_files.relative_path
+         ORDER BY (
+           SELECT MAX(saves.updated_at) FROM saves
+           WHERE saves.edition_id = editions.id AND saves.player_key = ? AND saves.kind = 'state'
+         ) DESC, editions.preferred DESC, game_files.relative_path
          LIMIT 1`,
       )
-      .get(gameId) as unknown as FileRow | undefined;
+      .get(gameId, playerKey) as unknown as FileRow | undefined;
     return row?.relative_path ?? null;
   }
 
@@ -299,7 +438,9 @@ export class CatalogRepository {
         `SELECT saves.relative_path, saves.updated_at
          FROM saves
          JOIN editions ON editions.id = saves.edition_id
-         WHERE editions.game_id = ? AND saves.player_key = ? AND saves.kind = 'state'`,
+         WHERE editions.game_id = ? AND saves.player_key = ? AND saves.kind = 'state'
+         ORDER BY saves.updated_at DESC
+         LIMIT 1`,
       )
       .get(gameId, playerKey) as unknown as
       | { relative_path: string; updated_at: string }
@@ -310,6 +451,12 @@ export class CatalogRepository {
   recordSave(gameId: string, relativePath: string, byteSize: number, savedAt: Date, playerKey = DEFAULT_PLAYER_KEY): void {
     const game = this.getGame(gameId, playerKey);
     if (!game) throw new Error("Game not found.");
+    this.database.prepare(`
+      DELETE FROM saves
+      WHERE player_key = ? AND kind = 'state' AND edition_id IN (
+        SELECT id FROM editions WHERE game_id = ? AND id <> ?
+      )
+    `).run(playerKey, gameId, game.editionId);
     this.database
       .prepare(
         `INSERT INTO saves(edition_id, player_key, kind, relative_path, byte_size, updated_at)
@@ -326,8 +473,9 @@ export class CatalogRepository {
     const game = this.getGame(gameId, playerKey);
     if (!game) throw new Error("Game not found.");
     this.database
-      .prepare("DELETE FROM saves WHERE edition_id = ? AND player_key = ? AND kind = 'state'")
-      .run(game.editionId, playerKey);
+      .prepare(`DELETE FROM saves WHERE player_key = ? AND kind = 'state'
+        AND edition_id IN (SELECT id FROM editions WHERE game_id = ?)`)
+      .run(playerKey, gameId);
   }
 
   setFavorite(gameId: string, favorite: boolean, changedAt = new Date(), playerKey = DEFAULT_PLAYER_KEY): GameDetail {
@@ -464,17 +612,19 @@ export class CatalogRepository {
   getArtworkSource(gameId: string): string | null {
     const row = this.database
       .prepare(
-        `SELECT games.display_name, MIN(game_files.relative_path) AS relative_path, metadata_corrections.cover_url
+        `SELECT games.display_name, MIN(game_files.relative_path) AS relative_path,
+           metadata_corrections.cover_url, metadata_matches.cover_url AS matched_cover_url
          FROM games
          JOIN editions ON editions.game_id = games.id AND editions.active = 1
          JOIN game_files ON game_files.edition_id = editions.id AND game_files.active = 1
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
+         LEFT JOIN metadata_matches ON metadata_matches.game_id = games.id
          WHERE games.id = ? AND games.active = 1
          GROUP BY games.id`,
       )
-      .get(gameId) as unknown as { display_name: string; relative_path: string; cover_url: string | null } | undefined;
+      .get(gameId) as unknown as { display_name: string; relative_path: string; cover_url: string | null; matched_cover_url: string | null } | undefined;
     if (!row) return null;
-    return row.cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl;
+    return row.cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl;
   }
 }
 
@@ -482,27 +632,33 @@ function stableId(kind: string, value: string): string {
   return createHash("sha256").update(`${kind}\0${value}`).digest("hex").slice(0, 24);
 }
 
+function gameIdentityKey(displayName: string): string {
+  return displayName.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+}
+
 function toGameSummary(row: GameRow): GameSummary {
   const gameMetadata = metadataForGame(row.display_name, row.relative_path);
+  const curated = hasCuratedMetadata(row.display_name);
   const correctedGenres = parseGenres(row.corrected_genres_json);
+  const matchedGenres = parseGenres(row.matched_genres_json);
   return {
     id: row.id,
-    displayName: row.corrected_display_name ?? row.display_name,
+    displayName: row.corrected_display_name ?? row.matched_display_name ?? row.display_name,
     platform: row.platform_key,
     platformName: platforms[row.platform_key].displayName,
     addedAt: row.added_at,
     byteSize: row.byte_size,
     ...gameMetadata,
-    releaseYear: row.corrected_release_year ?? gameMetadata.releaseYear,
-    description: row.corrected_description ?? gameMetadata.description,
-    genres: correctedGenres ?? gameMetadata.genres,
-    series: row.correction_game_id ? row.corrected_series_name : gameMetadata.series,
+    releaseYear: row.corrected_release_year ?? (curated ? gameMetadata.releaseYear : row.matched_release_year) ?? gameMetadata.releaseYear,
+    description: row.corrected_description ?? (curated ? gameMetadata.description : row.matched_description) ?? gameMetadata.description,
+    genres: correctedGenres ?? (curated ? gameMetadata.genres : matchedGenres) ?? gameMetadata.genres,
+    series: row.correction_game_id ? row.corrected_series_name : row.matched_series_name ?? gameMetadata.series,
     coverUrl: `/api/artwork/${row.id}?v=${encodeURIComponent(row.corrected_updated_at ?? "source")}`,
     hasServerSave: row.save_updated_at !== null,
     saveUpdatedAt: row.save_updated_at,
     isFavorite: row.is_favorite === 1,
     lastPlayedAt: row.last_played_at,
-    metadataStatus: row.correction_game_id ? "corrected" : hasCuratedMetadata(row.display_name) ? "curated" : "filename",
+    metadataStatus: row.correction_game_id ? "corrected" : row.match_game_id ? "matched" : curated ? "curated" : "filename",
   };
 }
 
