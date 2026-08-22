@@ -18,7 +18,7 @@ afterEach(async () => {
 describe("Playback Resolver", () => {
   it("resolves the preferred Edition to a scoped URL and an internal NES Playback Profile", async () => {
     const libraryRoot = await temporaryDirectory("portal-launch-");
-    await writeFile(path.join(libraryRoot, "test_game.nes"), "test game bytes");
+    await writeFile(path.join(libraryRoot, "test_game.nes"), nesBytes());
     const database = openMemoryDatabase(migrationsDir);
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource(libraryRoot);
@@ -38,7 +38,24 @@ describe("Playback Resolver", () => {
     expect(resolver.resolveSession(manifest.sessionId, 2_001)).toBeNull();
     database.close();
   });
+
+  it("rejects a file that does not contain an NES cartridge header", async () => {
+    const libraryRoot = await temporaryDirectory("portal-invalid-launch-");
+    await writeFile(path.join(libraryRoot, "not_a_game.nes"), Buffer.alloc(4_096));
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource(libraryRoot);
+    catalog.commitScan(await scanNesLibrary(libraryRoot));
+    const resolver = new PlaybackResolver(catalog);
+
+    expect(() => resolver.resolve(catalog.listGames()[0].id)).toThrow("valid NES game");
+    database.close();
+  });
 });
+
+function nesBytes(): Buffer {
+  return Buffer.concat([Buffer.from([0x4e, 0x45, 0x53, 0x1a]), Buffer.alloc(16_380)]);
+}
 
 async function temporaryDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), prefix));

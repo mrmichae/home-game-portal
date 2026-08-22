@@ -19,6 +19,7 @@ describe("NES Library Source scanning", () => {
     await mkdir(path.join(root, "nes", "favorites"), { recursive: true });
     const gameBytes = Buffer.from("NES fixture bytes");
     await writeFile(path.join(root, "nes", "favorites", "mega_man_2_(USA).nes"), gameBytes);
+    await writeFile(path.join(root, "nes", "favorites", "._mega_man_2_(USA).nes"), Buffer.alloc(4_096));
     await writeFile(path.join(root, "nes", "notes.txt"), "ignore me");
     await writeFile(path.join(outside, "outside.nes"), "outside");
     await symlink(path.join(outside, "outside.nes"), path.join(root, "nes", "linked.nes"));
