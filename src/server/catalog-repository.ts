@@ -9,6 +9,7 @@ import type {
   EmulatorProfile,
   PlatformKey,
 } from "../domain/types.js";
+import { WEB_CHECKPOINT_COMPATIBILITY } from "../domain/types.js";
 import type { PortalDatabase } from "./database.js";
 import { hasCuratedMetadata, metadataForGame } from "./nes-metadata.js";
 import { isProfileAvatarKey, profileAvatarChoice, type ProfileAvatarKey } from "../domain/profile-avatars.js";
@@ -48,8 +49,16 @@ interface GameRow {
   matched_cover_url: string | null;
 }
 
-interface FileRow {
+interface PlaybackSourceRow {
   relative_path: string;
+  edition_id: string;
+  content_hash: string;
+}
+
+export interface PlaybackSourceRecord {
+  relativePath: string;
+  editionId: string;
+  contentHash: string;
 }
 
 export interface ScanCommitResult {
@@ -281,16 +290,25 @@ export class CatalogRepository {
            editions.platform_key,
            MIN(game_files.relative_path) AS relative_path,
            MIN(game_files.byte_size) AS byte_size,
-           saves.updated_at AS save_updated_at,
+           (
+             SELECT MAX(checkpoint.created_at)
+             FROM save_checkpoints AS checkpoint
+             WHERE checkpoint.edition_id = editions.id
+               AND checkpoint.player_key = $player
+               AND checkpoint.adapter_key = $adapter
+               AND checkpoint.core_key = $core
+               AND checkpoint.runtime_version = $runtime
+               AND checkpoint.status IN ('candidate', 'verified')
+           ) AS save_updated_at,
            EXISTS (
              SELECT 1 FROM favorites
-             WHERE favorites.game_id = games.id AND favorites.player_key = ?
+             WHERE favorites.game_id = games.id AND favorites.player_key = $player
            ) AS is_favorite,
            (
              SELECT MAX(play_sessions.started_at)
              FROM play_sessions
              JOIN editions AS played_editions ON played_editions.id = play_sessions.edition_id
-             WHERE played_editions.game_id = games.id AND play_sessions.player_key = ?
+             WHERE played_editions.game_id = games.id AND play_sessions.player_key = $player
            ) AS last_played_at
            , metadata_corrections.game_id AS correction_game_id
            , metadata_corrections.display_name AS corrected_display_name
@@ -320,8 +338,13 @@ export class CatalogRepository {
                  AND candidate_file.relative_path NOT LIKE '%/__MACOSX/%'
              )
            ORDER BY (
-             SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
-             WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
+             SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
+             WHERE candidate_checkpoint.edition_id = candidate.id
+               AND candidate_checkpoint.player_key = $player
+               AND candidate_checkpoint.adapter_key = $adapter
+               AND candidate_checkpoint.core_key = $core
+               AND candidate_checkpoint.runtime_version = $runtime
+               AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
          )
@@ -330,15 +353,18 @@ export class CatalogRepository {
            AND game_files.relative_path NOT LIKE '%/._%'
            AND game_files.relative_path NOT LIKE '__MACOSX/%'
            AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
-         LEFT JOIN saves ON saves.edition_id = editions.id
-           AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
          LEFT JOIN metadata_matches ON metadata_matches.game_id = games.id
          WHERE games.active = 1
-         GROUP BY games.id, editions.id, saves.updated_at
+         GROUP BY games.id, editions.id
          ORDER BY games.display_name COLLATE NOCASE`,
       )
-      .all(playerKey, playerKey, playerKey, playerKey) as unknown as GameRow[];
+      .all({
+        $player: playerKey,
+        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
+        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+      }) as unknown as GameRow[];
     return rows.map(toGameSummary);
   }
 
@@ -353,16 +379,25 @@ export class CatalogRepository {
            editions.platform_key,
            MIN(game_files.relative_path) AS relative_path,
            MIN(game_files.byte_size) AS byte_size,
-           saves.updated_at AS save_updated_at,
+           (
+             SELECT MAX(checkpoint.created_at)
+             FROM save_checkpoints AS checkpoint
+             WHERE checkpoint.edition_id = editions.id
+               AND checkpoint.player_key = $player
+               AND checkpoint.adapter_key = $adapter
+               AND checkpoint.core_key = $core
+               AND checkpoint.runtime_version = $runtime
+               AND checkpoint.status IN ('candidate', 'verified')
+           ) AS save_updated_at,
            EXISTS (
              SELECT 1 FROM favorites
-             WHERE favorites.game_id = games.id AND favorites.player_key = ?
+             WHERE favorites.game_id = games.id AND favorites.player_key = $player
            ) AS is_favorite,
            (
              SELECT MAX(play_sessions.started_at)
              FROM play_sessions
              JOIN editions AS played_editions ON played_editions.id = play_sessions.edition_id
-             WHERE played_editions.game_id = games.id AND play_sessions.player_key = ?
+             WHERE played_editions.game_id = games.id AND play_sessions.player_key = $player
            ) AS last_played_at
            , metadata_corrections.game_id AS correction_game_id
            , metadata_corrections.display_name AS corrected_display_name
@@ -392,8 +427,13 @@ export class CatalogRepository {
                  AND candidate_file.relative_path NOT LIKE '%/__MACOSX/%'
              )
            ORDER BY (
-             SELECT MAX(candidate_save.updated_at) FROM saves AS candidate_save
-             WHERE candidate_save.edition_id = candidate.id AND candidate_save.player_key = ? AND candidate_save.kind = 'state'
+             SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
+             WHERE candidate_checkpoint.edition_id = candidate.id
+               AND candidate_checkpoint.player_key = $player
+               AND candidate_checkpoint.adapter_key = $adapter
+               AND candidate_checkpoint.core_key = $core
+               AND candidate_checkpoint.runtime_version = $runtime
+               AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
          )
@@ -402,40 +442,59 @@ export class CatalogRepository {
            AND game_files.relative_path NOT LIKE '%/._%'
            AND game_files.relative_path NOT LIKE '__MACOSX/%'
            AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
-         LEFT JOIN saves ON saves.edition_id = editions.id
-           AND saves.player_key = ? AND saves.kind = 'state'
          LEFT JOIN metadata_corrections ON metadata_corrections.game_id = games.id
          LEFT JOIN metadata_matches ON metadata_matches.game_id = games.id
-         WHERE games.id = ? AND games.active = 1
-         GROUP BY games.id, editions.id, saves.updated_at`,
+         WHERE games.id = $game AND games.active = 1
+         GROUP BY games.id, editions.id`,
       )
-      .get(playerKey, playerKey, playerKey, playerKey, gameId) as unknown as GameRow | undefined;
+      .get({
+        $player: playerKey,
+        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
+        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+        $game: gameId,
+      }) as unknown as GameRow | undefined;
     if (!row) return null;
     return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl };
   }
 
   getPreferredGameFile(gameId: string, playerKey = DEFAULT_PLAYER_KEY): string | null {
+    return this.getPlaybackSource(gameId, playerKey)?.relativePath ?? null;
+  }
+
+  getPlaybackSource(gameId: string, playerKey = DEFAULT_PLAYER_KEY): PlaybackSourceRecord | null {
     const row = this.database
       .prepare(
-        `SELECT game_files.relative_path
+        `SELECT game_files.relative_path, editions.id AS edition_id, game_files.content_hash
          FROM games
          JOIN editions ON editions.game_id = games.id
            AND editions.active = 1
          JOIN game_files ON game_files.edition_id = editions.id
            AND game_files.active = 1
-         WHERE games.id = ? AND games.active = 1
+         WHERE games.id = $game AND games.active = 1
            AND game_files.relative_path NOT LIKE '._%'
            AND game_files.relative_path NOT LIKE '%/._%'
            AND game_files.relative_path NOT LIKE '__MACOSX/%'
            AND game_files.relative_path NOT LIKE '%/__MACOSX/%'
          ORDER BY (
-           SELECT MAX(saves.updated_at) FROM saves
-           WHERE saves.edition_id = editions.id AND saves.player_key = ? AND saves.kind = 'state'
+           SELECT MAX(checkpoint.created_at) FROM save_checkpoints AS checkpoint
+           WHERE checkpoint.edition_id = editions.id
+             AND checkpoint.player_key = $player
+             AND checkpoint.adapter_key = $adapter
+             AND checkpoint.core_key = $core
+             AND checkpoint.runtime_version = $runtime
+             AND checkpoint.status IN ('candidate', 'verified')
          ) DESC, editions.preferred DESC, game_files.relative_path
          LIMIT 1`,
       )
-      .get(gameId, playerKey) as unknown as FileRow | undefined;
-    return row?.relative_path ?? null;
+      .get({
+        $game: gameId,
+        $player: playerKey,
+        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
+        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+      }) as unknown as PlaybackSourceRow | undefined;
+    return row ? { relativePath: row.relative_path, editionId: row.edition_id, contentHash: row.content_hash } : null;
   }
 
   getLibraryRoot(): string {
@@ -460,52 +519,6 @@ export class CatalogRepository {
       )
       .get(platformKey) as unknown as EmulatorProfileRow | undefined;
     return row ? toEmulatorProfile(row) : null;
-  }
-
-  getSaveRecord(gameId: string, playerKey = DEFAULT_PLAYER_KEY): { relativePath: string; updatedAt: string } | null {
-    const row = this.database
-      .prepare(
-        `SELECT saves.relative_path, saves.updated_at
-         FROM saves
-         JOIN editions ON editions.id = saves.edition_id
-         WHERE editions.game_id = ? AND saves.player_key = ? AND saves.kind = 'state'
-         ORDER BY saves.updated_at DESC
-         LIMIT 1`,
-      )
-      .get(gameId, playerKey) as unknown as
-      | { relative_path: string; updated_at: string }
-      | undefined;
-    return row ? { relativePath: row.relative_path, updatedAt: row.updated_at } : null;
-  }
-
-  recordSave(gameId: string, relativePath: string, byteSize: number, savedAt: Date, playerKey = DEFAULT_PLAYER_KEY): void {
-    const game = this.getGame(gameId, playerKey);
-    if (!game) throw new Error("Game not found.");
-    this.database.prepare(`
-      DELETE FROM saves
-      WHERE player_key = ? AND kind = 'state' AND edition_id IN (
-        SELECT id FROM editions WHERE game_id = ? AND id <> ?
-      )
-    `).run(playerKey, gameId, game.editionId);
-    this.database
-      .prepare(
-        `INSERT INTO saves(edition_id, player_key, kind, relative_path, byte_size, updated_at)
-         VALUES (?, ?, 'state', ?, ?, ?)
-         ON CONFLICT(edition_id, player_key, kind) DO UPDATE SET
-           relative_path = excluded.relative_path,
-           byte_size = excluded.byte_size,
-           updated_at = excluded.updated_at`,
-      )
-      .run(game.editionId, playerKey, relativePath, byteSize, savedAt.toISOString());
-  }
-
-  deleteSaveRecord(gameId: string, playerKey = DEFAULT_PLAYER_KEY): void {
-    const game = this.getGame(gameId, playerKey);
-    if (!game) throw new Error("Game not found.");
-    this.database
-      .prepare(`DELETE FROM saves WHERE player_key = ? AND kind = 'state'
-        AND edition_id IN (SELECT id FROM editions WHERE game_id = ?)`)
-      .run(playerKey, gameId);
   }
 
   setFavorite(gameId: string, favorite: boolean, changedAt = new Date(), playerKey = DEFAULT_PLAYER_KEY): GameDetail {

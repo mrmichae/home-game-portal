@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CatalogRepository } from "../catalog-repository.js";
 import { openMemoryDatabase } from "../database.js";
 import { scanNesLibrary } from "../library-scanner.js";
-import type { DiscoveredGameFile } from "../../domain/types.js";
+import { WEB_CHECKPOINT_COMPATIBILITY, type DiscoveredGameFile } from "../../domain/types.js";
+import { VersionedCheckpointStore } from "../checkpoint-store.js";
 
 const temporaryDirectories: string[] = [];
 const migrationsDir = path.resolve(process.cwd(), "migrations");
@@ -31,7 +32,7 @@ describe("Household library persistence", () => {
     database.close();
   });
 
-  it("models differently hashed copies of one normalized title as Editions of one Game", () => {
+  it("models differently hashed copies of one normalized title as Editions of one Game", async () => {
     const database = openMemoryDatabase(migrationsDir);
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
@@ -47,17 +48,21 @@ describe("Household library persistence", () => {
     const editionCount = database.prepare("SELECT COUNT(*) AS count FROM editions WHERE active = 1").get() as unknown as { count: number };
     expect(editionCount.count).toBe(2);
     const editions = database.prepare(`
-      SELECT editions.id, game_files.relative_path
+      SELECT editions.id, game_files.relative_path, game_files.content_hash
       FROM editions JOIN game_files ON game_files.edition_id = editions.id
       ORDER BY game_files.relative_path
-    `).all() as unknown as Array<{ id: string; relative_path: string }>;
-    database.prepare(`INSERT INTO saves(edition_id, player_key, kind, relative_path, byte_size, updated_at)
-      VALUES (?, 'household', 'state', ?, 1, ?)`)
-      .run(editions[0].id, "household/old.state", "2026-08-21T10:00:00.000Z");
-    database.prepare(`INSERT INTO saves(edition_id, player_key, kind, relative_path, byte_size, updated_at)
-      VALUES (?, 'household', 'state', ?, 1, ?)`)
-      .run(editions[1].id, "household/new.state", "2026-08-21T11:00:00.000Z");
-    expect(catalog.getSaveRecord(catalog.listGames()[0].id)?.relativePath).toBe("household/new.state");
+    `).all() as unknown as Array<{ id: string; relative_path: string; content_hash: string }>;
+    const savesRoot = await mkdtemp(path.join(os.tmpdir(), "portal-edition-checkpoints-"));
+    temporaryDirectories.push(savesRoot);
+    const store = new VersionedCheckpointStore(savesRoot, database);
+    await store.capture({
+      gameId: catalog.listGames()[0].id,
+      editionId: editions[1].id,
+      playerKey: "household",
+      romContentHash: editions[1].content_hash,
+      compatibility: WEB_CHECKPOINT_COMPATIBILITY,
+    }, Buffer.from([1]), 10, new Date("2026-08-21T11:00:00.000Z"));
+    expect(catalog.listGames()[0].hasServerSave).toBe(true);
     expect(catalog.getPreferredGameFile(catalog.listGames()[0].id)).toBe(editions[1].relative_path);
     database.close();
   });

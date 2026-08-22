@@ -6,7 +6,7 @@ import { Spinner } from "../components";
 import { EmulatorJsPlaybackAdapter } from "../playback/emulator-js-adapter";
 
 type PlayerStatus = "preparing" | "loading" | "running" | "error";
-type SaveStatus = "idle" | "loaded" | "syncing" | "saved" | "error";
+type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
 
 export function PlayerPage(): React.JSX.Element {
   const { gameId = "" } = useParams();
@@ -75,7 +75,7 @@ export function PlayerPage(): React.JSX.Element {
       <header className="player-topbar">
         <button type="button" className="player-back" onClick={() => void leavePlayer()} disabled={leaving}>{leaving ? "Saving…" : "← Leave player"}</button>
         <strong>{manifest?.gameName ?? "Preparing game"}</strong>
-        <SaveIndicator status={saveStatus} hasExistingSave={Boolean(manifest?.saveStateUrl)} />
+        <SaveIndicator status={saveStatus} hasExistingSave={Boolean(manifest?.resumePlan.checkpoints.length)} />
       </header>
 
       <section className="player-stage" aria-label="Game player" onPointerDown={focusPlayer}>
@@ -98,7 +98,7 @@ export function PlayerPage(): React.JSX.Element {
       </section>
       <footer className="player-help">
         <span>Progress saves automatically when you leave.</span>
-        <span><b>Save State</b> also creates a server checkpoint at any time.</span>
+        <span><b>Save State</b> keeps a browser checkpoint as an independent fallback.</span>
       </footer>
     </main>
   );
@@ -108,9 +108,10 @@ function SaveIndicator({ status, hasExistingSave }: { status: SaveStatus; hasExi
   const labels: Record<SaveStatus, string> = {
     idle: hasExistingSave ? "Saved progress available" : "Save ready",
     loaded: "Saved progress loaded",
+    fresh: "Previous checkpoint skipped · started fresh",
     syncing: "Saving to server…",
     saved: "Saved to server",
-    error: "Browser save kept · server sync failed",
+    error: "Server sync failed · browser fallback unchanged",
   };
   return <span className={`save-indicator save-${status}`}><i />{labels[status]}</span>;
 }

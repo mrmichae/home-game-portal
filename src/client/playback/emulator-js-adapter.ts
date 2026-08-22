@@ -1,7 +1,8 @@
-import type { ControllerPresetKey, LaunchManifest } from "../../domain/types";
+import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest } from "../../domain/types";
+import { ResumeCoordinator, type ResumableGameManager } from "./resume-coordinator";
 
-type SaveStatus = "idle" | "loaded" | "syncing" | "saved" | "error";
-const emulatorJsAssetVersion = "4.2.3-portal.2";
+type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
+const emulatorJsAssetVersion = WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion;
 
 export interface PlaybackCallbacks {
   onReady: () => void;
@@ -9,10 +10,6 @@ export interface PlaybackCallbacks {
   onExit: () => void;
   onError: (message: string) => void;
   onSaveStatus: (status: SaveStatus) => void;
-}
-
-interface SaveStateEvent {
-  state: ArrayBuffer | Uint8Array;
 }
 
 interface RuntimeOptions {
@@ -24,6 +21,7 @@ interface EmulatorGameManager {
   getState?: () => Uint8Array;
   getFrameNum?: () => number;
   loadState?: (state: Uint8Array) => void;
+  restart?: () => void;
 }
 
 interface EmulatorWindow extends Window {
@@ -49,8 +47,8 @@ interface EmulatorWindow extends Window {
   EJS_Buttons?: Record<string, boolean>;
   EJS_ready?: () => void;
   EJS_onGameStart?: () => void;
-  EJS_onLoadState?: () => void;
-  EJS_onSaveState?: (event: SaveStateEvent) => void;
+  EJS_onLoadState?: unknown;
+  EJS_onSaveState?: unknown;
   EJS_onExit?: () => void;
   EJS_emulator?: {
     callEvent?: (event: string) => void;
@@ -142,86 +140,9 @@ export class PlaybackExitCoordinator {
   }
 }
 
-export class PlaybackSaveSession {
-  constructor(
-    private readonly persist: (state: ArrayBuffer) => Promise<void>,
-    private readonly onStatus: (status: SaveStatus) => void,
-  ) {}
-
-  async save(state: ArrayBuffer | Uint8Array): Promise<void> {
-    this.onStatus("syncing");
-    try {
-      const body = state instanceof Uint8Array ? state.slice().buffer as ArrayBuffer : state.slice(0);
-      await this.persist(body);
-      this.onStatus("saved");
-    } catch (error) {
-      this.onStatus("error");
-      throw error;
-    }
-  }
-}
-
-export class InitialStateRestorer {
-  private restored = false;
-  private pendingRestore: Promise<boolean> | null = null;
-
-  constructor(private readonly state: Uint8Array | null) {}
-
-  restore(gameManager?: EmulatorGameManager): boolean {
-    if (this.restored || !this.state?.byteLength || !gameManager?.loadState) return false;
-    try {
-      if (!gameManager.getFrameNum || gameManager.getFrameNum() < 1) return false;
-    } catch {
-      return false;
-    }
-    gameManager.loadState(this.state);
-    this.restored = true;
-    return true;
-  }
-
-  restoreWhenReady(
-    getGameManager: () => EmulatorGameManager | undefined,
-    scheduleFrame: (callback: FrameRequestCallback) => number,
-    isCancelled: () => boolean = () => false,
-    maximumAttempts = 120,
-  ): Promise<boolean> {
-    if (this.restored || !this.state?.byteLength) return Promise.resolve(false);
-    if (this.pendingRestore) return this.pendingRestore;
-
-    this.pendingRestore = new Promise<boolean>((resolve, reject) => {
-      let attempts = 0;
-      const attempt = () => {
-        if (isCancelled()) {
-          this.pendingRestore = null;
-          resolve(false);
-          return;
-        }
-        try {
-          if (this.restore(getGameManager())) {
-            resolve(true);
-            return;
-          }
-        } catch (error) {
-          this.pendingRestore = null;
-          reject(error);
-          return;
-        }
-        attempts += 1;
-        if (attempts >= maximumAttempts) {
-          this.pendingRestore = null;
-          resolve(false);
-          return;
-        }
-        scheduleFrame(attempt);
-      };
-      attempt();
-    });
-    return this.pendingRestore;
-  }
-}
-
 export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
   private saveCurrentState: (() => Promise<void>) | null = null;
+  private readonly resumeCoordinator = new ResumeCoordinator();
 
   save(): Promise<void> {
     return this.saveCurrentState?.() ?? Promise.reject(new Error("The game is not ready to save."));
@@ -236,11 +157,9 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
     const startupRequest = new AbortController();
     const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal);
-    const initialStatePromise = fetchInitialState(manifest.saveStateUrl, startupRequest.signal);
     let running = false;
     let failed = false;
     let disposed = false;
-    let initialStateRestorer: InitialStateRestorer | null = null;
     let gameFileUrl: string | null = null;
     const reportError = (message: string) => {
       if (failed || running) return;
@@ -274,39 +193,38 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset);
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
     host.EJS_Buttons = { netplay: false, settings: false, exitEmulation: false };
-    const saveSession = new PlaybackSaveSession(async (body) => {
-      const response = await fetch(`/api/saves/${manifest.gameId}/state`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream", "X-Player-Profile": manifest.playerProfileKey },
-        body,
-      });
-      if (!response.ok) throw new Error("Save sync failed.");
-    }, callbacks.onSaveStatus);
     host.EJS_ready = callbacks.onReady;
     host.EJS_onGameStart = () => {
       running = true;
       this.saveCurrentState = async () => {
-        const state = host.EJS_emulator?.gameManager?.getState?.();
-        if (!state?.byteLength) throw new Error("The game did not provide save data.");
-        await saveSession.save(state);
+        const gameManager = resumableGameManager(host.EJS_emulator?.gameManager);
+        if (!gameManager) throw new Error("The game is not ready to create a checkpoint.");
+        callbacks.onSaveStatus("syncing");
+        try {
+          await this.resumeCoordinator.capture(manifest.resumePlan, gameManager);
+          callbacks.onSaveStatus("saved");
+        } catch (error) {
+          callbacks.onSaveStatus("error");
+          throw error;
+        }
       };
       window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true }));
       callbacks.onRunning();
-      void initialStateRestorer
-        ?.restoreWhenReady(
-          () => host.EJS_emulator?.gameManager,
-          window.requestAnimationFrame.bind(window),
-          () => disposed,
-        )
-        .then((restored) => {
-          if (restored) callbacks.onSaveStatus("loaded");
-        })
-        .catch(() => callbacks.onSaveStatus("error"));
+      void this.resumeCoordinator.restore(
+        manifest.resumePlan,
+        () => resumableGameManager(host.EJS_emulator?.gameManager),
+        () => disposed,
+      ).then((result) => {
+        if (result.status === "restored") callbacks.onSaveStatus("loaded");
+        if (result.status === "fresh") callbacks.onSaveStatus("fresh");
+      }).catch(() => callbacks.onSaveStatus("error"));
     };
-    host.EJS_onLoadState = () => callbacks.onSaveStatus("loaded");
-    host.EJS_onSaveState = ({ state }) => {
-      void saveSession.save(state).catch(() => undefined);
-    };
+    // Do not register the load/save state events. EmulatorJS skips its own
+    // IndexedDB behavior whenever either event has a listener; leaving both
+    // alone preserves browser-native Save State and Load State as an independent
+    // recovery path.
+    delete host.EJS_onLoadState;
+    delete host.EJS_onSaveState;
     host.EJS_onExit = exitCoordinator.handleEmulatorExit;
 
     const onWindowError = (event: ErrorEvent) => {
@@ -348,12 +266,11 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       };
       host.EJS_Runtime = wrappedRuntime;
       try {
-        const [gameFile, initialState] = await Promise.all([gameFilePromise, initialStatePromise]);
+        const gameFile = await gameFilePromise;
         gameFileUrl = URL.createObjectURL(gameFile);
         // EmulatorJS derives a virtual filename from the URL. Preserve the platform
         // extension in the fragment while retaining the revocable object URL.
         host.EJS_gameUrl = `${gameFileUrl}#game.nes`;
-        initialStateRestorer = new InitialStateRestorer(initialState);
       } catch (error) {
         if (!disposed) reportError(playerMessage(error));
         return;
@@ -402,15 +319,6 @@ export async function fetchGameFile(
   return new Blob([bytes], { type: "application/octet-stream" });
 }
 
-async function fetchInitialState(saveStateUrl: string | null, signal: AbortSignal): Promise<Uint8Array | null> {
-  if (!saveStateUrl) return null;
-  const response = await fetch(saveStateUrl, { cache: "no-store", signal });
-  if (!response.ok) throw new Error("Saved progress could not be loaded. Remove it from Continue Playing to start fresh.");
-  const state = new Uint8Array(await response.arrayBuffer());
-  if (!state.byteLength) throw new Error("Saved progress is empty. Remove it from Continue Playing to start fresh.");
-  return state;
-}
-
 export function resolveFceummRuntimeFile(
   filename: string,
   scriptDirectory?: string,
@@ -445,4 +353,10 @@ function playerMessage(reason: unknown): string {
     return "The game file could not be read. Check the library mount, then try again.";
   }
   return "This game could not start in the browser. Your library file was not changed.";
+}
+
+function resumableGameManager(gameManager?: EmulatorGameManager): ResumableGameManager | undefined {
+  return gameManager?.getState && gameManager.getFrameNum && gameManager.loadState
+    ? gameManager as ResumableGameManager
+    : undefined;
 }

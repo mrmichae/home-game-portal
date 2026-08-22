@@ -6,7 +6,7 @@ import { CatalogRepository, DEFAULT_PLAYER_KEY, type ScanCommitResult } from "./
 import { openDatabase, type PortalDatabase } from "./database.js";
 import { scanNesLibrary } from "./library-scanner.js";
 import { PlaybackResolver } from "./playback-resolver.js";
-import { SaveStore } from "./save-store.js";
+import { VersionedCheckpointStore } from "./checkpoint-store.js";
 import { ArtworkStore } from "./artwork-store.js";
 import { PortalConfiguration } from "./portal-configuration.js";
 import { PortalPresentation } from "./portal-presentation.js";
@@ -33,8 +33,8 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
   const configuration = new PortalConfiguration(catalog, config.defaultLibraryRoot);
   configuration.initialize();
   const presentation = new PortalPresentation(database);
-  const playbackResolver = new PlaybackResolver(catalog);
-  const saveStore = new SaveStore(config.savesDir, catalog);
+  const checkpointStore = new VersionedCheckpointStore(config.savesDir, database);
+  const playbackResolver = new PlaybackResolver(catalog, checkpointStore);
   const artworkStore = new ArtworkStore(config.artworkDir, catalog);
   const metadataProvider = dependencies.metadataProvider ?? new RetronianMetadataProvider(path.join(config.dataDir, "metadata"));
   const app = express();
@@ -344,32 +344,81 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     return response.sendFile(absolutePath);
   });
 
-  app.put(
-    "/api/saves/:gameId/state",
+  app.post(
+    "/api/games/:gameId/checkpoints",
     express.raw({ type: "application/octet-stream", limit: "12mb" }),
     async (request, response, next) => {
       try {
         const playerKey = playerKeyFor(request);
-        if (!catalog.getGame(request.params.gameId, playerKey)) {
-          return response.status(404).json({ message: "That game is no longer on this shelf." });
-        }
+        const sessionId = typeof request.query.session === "string" ? request.query.session : "";
+        const context = playbackResolver.resolveCheckpointSession(sessionId, request.params.gameId, playerKey);
+        if (!context) return response.status(409).json({ message: "This playback session can no longer create a checkpoint. Your browser save remains available." });
         if (!Buffer.isBuffer(request.body)) {
-          return response.status(415).json({ message: "Save data was not understood." });
+          return response.status(415).json({ message: "Checkpoint data was not understood." });
         }
-        await saveStore.putState(request.params.gameId, request.body, new Date(), playerKey);
-        return response.status(204).send();
+        const capturedFrame = Number.parseInt(String(request.headers["x-captured-frame"] ?? ""), 10);
+        const checkpoint = await checkpointStore.capture(context, request.body, capturedFrame);
+        return response.status(201).json({ checkpoint });
       } catch (error) {
         return next(error);
       }
     },
   );
 
-  app.get("/api/saves/:gameId/state", (request, response) => {
-    const absolutePath = saveStore.getStatePath(request.params.gameId, playerKeyFor(request));
-    if (!absolutePath) return response.status(404).json({ message: "No saved progress is available yet." });
-    response.setHeader("Cache-Control", "private, no-store");
-    response.setHeader("Content-Type", "application/octet-stream");
-    return response.sendFile(absolutePath);
+  app.get("/api/games/:gameId/checkpoints/:checkpointId/state", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      const state = context ? await checkpointStore.readState(request.params.checkpointId, context) : null;
+      if (!state) return response.status(404).json({ message: "That checkpoint is no longer available." });
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Content-Type", "application/octet-stream");
+      return response.send(state);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/games/:gameId/checkpoints/:checkpointId/verified", (request, response) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      if (!context) return response.status(404).json({ message: "That game is no longer on this shelf." });
+      const checkpoint = checkpointStore.verify(request.params.checkpointId, context, Number(request.body?.observedFrame));
+      return response.json({ checkpoint });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Checkpoint could not be verified.";
+      return response.status(message === "Checkpoint is unavailable." ? 404 : 409).json({ message });
+    }
+  });
+
+  app.post("/api/games/:gameId/checkpoints/:checkpointId/failed", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      if (!context) return response.status(404).json({ message: "That game is no longer on this shelf." });
+      const rejected = await checkpointStore.reject(
+        request.params.checkpointId,
+        context,
+        String(request.body?.reason ?? "Checkpoint could not be restored."),
+      );
+      return rejected ? response.status(204).send() : response.status(404).json({ message: "Checkpoint is unavailable." });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  // Compatibility read for bookmarks or cached clients. New manifests use a
+  // version-specific checkpoint URL so a later capture cannot change the bytes.
+  app.get("/api/saves/:gameId/state", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      const checkpoint = context ? checkpointStore.listRestorable(context)[0] : null;
+      const state = context && checkpoint ? await checkpointStore.readState(checkpoint.id, context) : null;
+      if (!state) return response.status(404).json({ message: "No saved progress is available yet." });
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Content-Type", "application/octet-stream");
+      return response.send(state);
+    } catch (error) {
+      return next(error);
+    }
   });
 
   app.delete("/api/saves/:gameId/state", async (request, response, next) => {
@@ -378,7 +427,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
       if (!catalog.getGame(request.params.gameId, playerKey)) {
         return response.status(404).json({ message: "That game is no longer in your library." });
       }
-      await saveStore.deleteState(request.params.gameId, playerKey);
+      await checkpointStore.deleteGame(request.params.gameId, playerKey);
       return response.status(204).send();
     } catch (error) {
       return next(error);

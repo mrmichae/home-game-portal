@@ -69,7 +69,7 @@ export function HomePage(): React.JSX.Element {
   return (
     <>
       <CinematicRails {...props} />
-      {pendingRemoval && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-save-title"><p className="stream-kicker">Remove from Continue Playing</p><h2 id="remove-save-title">Delete progress for {pendingRemoval.displayName}?</h2><p>This permanently removes the synchronized Save. The source Game File will not be changed.</p><div><button className="stream-button secondary" onClick={() => setPendingRemoval(null)} disabled={removing} autoFocus data-controller-target>Cancel</button><button className="stream-button danger" onClick={() => void removeFromContinue()} disabled={removing} data-controller-target>{removing ? "Removing…" : "Delete progress"}</button></div></section></div>}
+      {pendingRemoval && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-save-title"><p className="stream-kicker">Remove from Continue Playing</p><h2 id="remove-save-title">Delete progress for {pendingRemoval.displayName}?</h2><p>This permanently removes every synchronized server Checkpoint for this profile. Browser-local Save State data and the source Game File will not be changed.</p><div><button className="stream-button secondary" onClick={() => setPendingRemoval(null)} disabled={removing} autoFocus data-controller-target>Cancel</button><button className="stream-button danger" onClick={() => void removeFromContinue()} disabled={removing} data-controller-target>{removing ? "Removing…" : "Delete progress"}</button></div></section></div>}
     </>
   );
 }
