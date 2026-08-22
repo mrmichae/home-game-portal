@@ -17,6 +17,7 @@ export function PlayerPage(): React.JSX.Element {
   const [leaving, setLeaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const failed = useRef(false);
+  const running = useRef(false);
   const leavingRef = useRef(false);
 
   const leavePlayer = async () => {
@@ -55,9 +56,10 @@ export function PlayerPage(): React.JSX.Element {
   useEffect(() => {
     if (!manifest) return;
     failed.current = false;
+    running.current = false;
     return adapter.mount(manifest, {
-      onReady: () => { if (!failed.current) setStatus("loading"); },
-      onRunning: () => { if (!failed.current) setStatus("running"); },
+      onReady: () => { if (!failed.current && !running.current) setStatus("loading"); },
+      onRunning: () => { if (!failed.current) { running.current = true; setStatus("running"); } },
       onExit: () => window.location.assign(gameId ? `/games/${gameId}` : "/"),
       onError: (error) => {
         failed.current = true;
