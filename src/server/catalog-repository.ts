@@ -30,6 +30,7 @@ interface GameRow {
   platform_key: PlatformKey;
   relative_path: string;
   save_updated_at: string | null;
+  continue_dismissed: number;
   is_favorite: number;
   last_played_at: string | null;
   correction_game_id: string | null;
@@ -257,6 +258,11 @@ export class CatalogRepository {
     `).run(groupedGameId, previousGameId);
     this.database.prepare("DELETE FROM favorites WHERE game_id = ?").run(previousGameId);
     this.database.prepare(`
+      INSERT OR IGNORE INTO continue_playing_dismissals(game_id, player_key, dismissed_at)
+      SELECT ?, player_key, dismissed_at FROM continue_playing_dismissals WHERE game_id = ?
+    `).run(groupedGameId, previousGameId);
+    this.database.prepare("DELETE FROM continue_playing_dismissals WHERE game_id = ?").run(previousGameId);
+    this.database.prepare(`
       INSERT OR IGNORE INTO metadata_corrections(
         game_id, display_name, release_year, description, genres_json, series_name, cover_url, updated_at
       ) SELECT ?, display_name, release_year, description, genres_json, series_name, cover_url, updated_at
@@ -300,6 +306,11 @@ export class CatalogRepository {
                AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
+           EXISTS (
+             SELECT 1 FROM continue_playing_dismissals
+             WHERE continue_playing_dismissals.game_id = games.id
+               AND continue_playing_dismissals.player_key = $player
+           ) AS continue_dismissed,
            EXISTS (
              SELECT 1 FROM favorites
              WHERE favorites.game_id = games.id AND favorites.player_key = $player
@@ -389,6 +400,11 @@ export class CatalogRepository {
                AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
+           EXISTS (
+             SELECT 1 FROM continue_playing_dismissals
+             WHERE continue_playing_dismissals.game_id = games.id
+               AND continue_playing_dismissals.player_key = $player
+           ) AS continue_dismissed,
            EXISTS (
              SELECT 1 FROM favorites
              WHERE favorites.game_id = games.id AND favorites.player_key = $player
@@ -540,15 +556,35 @@ export class CatalogRepository {
     return this.getGame(gameId, playerKey)!;
   }
 
+  dismissContinuePlaying(gameId: string, dismissedAt = new Date(), playerKey = DEFAULT_PLAYER_KEY): GameDetail {
+    const game = this.getGame(gameId, playerKey);
+    if (!game) throw new Error("Game not found.");
+    if (!game.hasServerSave) return game;
+    this.database.prepare(
+      `INSERT INTO continue_playing_dismissals(game_id, player_key, dismissed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(game_id, player_key) DO UPDATE SET dismissed_at = excluded.dismissed_at`,
+    ).run(gameId, playerKey, dismissedAt.toISOString());
+    return this.getGame(gameId, playerKey)!;
+  }
+
   recordPlaySession(gameId: string, startedAt = new Date(), playerKey = DEFAULT_PLAYER_KEY): void {
     const game = this.getGame(gameId, playerKey);
     if (!game) throw new Error("Game not found.");
-    this.database
-      .prepare(
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(
         `INSERT INTO play_sessions(edition_id, player_key, started_at)
          VALUES (?, ?, ?)`,
-      )
-      .run(game.editionId, playerKey, startedAt.toISOString());
+      ).run(game.editionId, playerKey, startedAt.toISOString());
+      this.database.prepare(
+        "DELETE FROM continue_playing_dismissals WHERE game_id = ? AND player_key = ?",
+      ).run(gameId, playerKey);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   listPlayerProfiles(): PlayerProfile[] {
@@ -698,6 +734,7 @@ function toGameSummary(row: GameRow): GameSummary {
     series: row.correction_game_id ? row.corrected_series_name : row.matched_series_name ?? gameMetadata.series,
     coverUrl: `/api/artwork/${row.id}?v=${encodeURIComponent(row.corrected_updated_at ?? "source")}`,
     hasServerSave: row.save_updated_at !== null,
+    isContinuePlaying: row.save_updated_at !== null && row.continue_dismissed !== 1,
     saveUpdatedAt: row.save_updated_at,
     isFavorite: row.is_favorite === 1,
     lastPlayedAt: row.last_played_at,

@@ -225,7 +225,7 @@ export class PortalPresentation {
 function resolveGames(rule: BrowseRowRule, games: GameSummary[], collections: CatalogCollection[]): GameSummary[] {
   switch (rule.type) {
     case "all": return games;
-    case "continue": return games.filter((game) => game.hasServerSave);
+    case "continue": return games.filter((game) => game.isContinuePlaying);
     case "favorites": return games.filter((game) => game.isFavorite);
     case "recent": return games.filter((game) => game.lastPlayedAt).sort((left, right) => right.lastPlayedAt!.localeCompare(left.lastPlayedAt!));
     case "genres": return games.filter((game) => game.genres.some((genre) => rule.genres.includes(genre)));

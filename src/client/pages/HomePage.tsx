@@ -51,15 +51,17 @@ export function HomePage(): React.JSX.Element {
 
   const removeFromContinue = async () => {
     if (!pendingRemoval) return;
+    const previousCatalog = catalog;
+    const removedGame = pendingRemoval;
     setRemoving(true);
+    setPendingRemoval(null);
+    setCatalog((current) => removeGameFromContinuePlaying(current, removedGame.id));
     try {
-      await api.deleteSave(pendingRemoval.id);
-      const removedName = pendingRemoval.displayName;
-      setPendingRemoval(null);
-      await loadCatalog();
-      setMessage(`${removedName} was removed from Continue Playing. Its saved progress was deleted.`);
+      await api.removeFromContinuePlaying(removedGame.id);
+      setMessage(`${removedGame.displayName} was removed from Continue Playing. Saved progress is still available.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Saved progress could not be removed.");
+      setCatalog(previousCatalog);
+      setMessage(error instanceof Error ? error.message : "The game could not be removed from Continue Playing.");
     } finally {
       setRemoving(false);
     }
@@ -69,9 +71,26 @@ export function HomePage(): React.JSX.Element {
   return (
     <>
       <CinematicRails {...props} />
-      {pendingRemoval && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-save-title"><p className="stream-kicker">Remove from Continue Playing</p><h2 id="remove-save-title">Delete progress for {pendingRemoval.displayName}?</h2><p>This permanently removes every synchronized server Checkpoint for this profile. Browser-local Save State data and the source Game File will not be changed.</p><div><button className="stream-button secondary" onClick={() => setPendingRemoval(null)} disabled={removing} autoFocus data-controller-target>Cancel</button><button className="stream-button danger" onClick={() => void removeFromContinue()} disabled={removing} data-controller-target>{removing ? "Removing…" : "Delete progress"}</button></div></section></div>}
+      {pendingRemoval && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-save-title"><p className="stream-kicker">Remove from Continue Playing</p><h2 id="remove-save-title">Remove {pendingRemoval.displayName} from this shelf?</h2><p>The ROM, metadata, artwork, Favorites, history, Saves, and Checkpoints will all be preserved.</p><div><button className="stream-button secondary" onClick={() => setPendingRemoval(null)} disabled={removing} autoFocus data-controller-target>Cancel</button><button className="stream-button danger" onClick={() => void removeFromContinue()} disabled={removing} data-controller-target>{removing ? "Removing…" : "Remove"}</button></div></section></div>}
     </>
   );
+}
+
+export function removeGameFromContinuePlaying(current: CatalogResponse | null, gameId: string): CatalogResponse | null {
+  if (!current) return current;
+  const updateGame = (game: GameSummary) => game.id === gameId ? { ...game, isContinuePlaying: false } : game;
+  return {
+    ...current,
+    shelf: { ...current.shelf, games: current.shelf.games.map(updateGame) },
+    presentation: {
+      ...current.presentation,
+      collections: current.presentation.collections.map((collection) => ({ ...collection, games: collection.games.map(updateGame) })),
+      browseRows: current.presentation.browseRows.map((row) => ({
+        ...row,
+        games: row.rule.type === "continue" ? row.games.filter((game) => game.id !== gameId) : row.games.map(updateGame),
+      })),
+    },
+  };
 }
 
 function LoadingLibrary(): React.JSX.Element {

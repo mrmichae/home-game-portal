@@ -17,7 +17,7 @@
 
 * { box-sizing: border-box; }
 html { min-width: 320px; scroll-behavior: smooth; background: var(--page-bg); }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--page-bg); }
+body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; background: var(--page-bg); }
 button, a { font: inherit; }
 button { color: inherit; }
 a { color: inherit; text-decoration: none; }
@@ -60,6 +60,8 @@ code { font-size: .92em; }
 .detail-header { display: grid; grid-template-columns: 1fr auto 1fr; }
 .detail-header .header-action { justify-self: start; margin-left: 0; }
 .detail-header .brand { grid-column: 2; }
+.detail-back { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.detail-back-arrow { width: 20px; height: 20px; display: grid; place-items: center; font-size: 20px; line-height: 1; }
 
 .featured-hero {
   position: relative;
@@ -136,7 +138,7 @@ code { font-size: .92em; }
 .privacy-note { color: #8d9098; font-size: 11px; margin-top: 24px; }
 .privacy-note span { color: #53d688; margin-right: 5px; }
 
-.player-page { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: #050609; display: flex; flex-direction: column; }
+.player-page { height: 100vh; height: 100dvh; min-height: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); overflow: hidden; background: #050609; display: flex; flex-direction: column; }
 .player-topbar { flex: 0 0 58px; min-height: 58px; padding: 0 clamp(16px, 3vw, 46px); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; border-bottom: 1px solid #25272d; background: #111318; }
 .player-topbar strong { text-align: center; font-size: 13px; }
 .player-back { justify-self: start; border: 0; background: transparent; padding: 0; color: #c3c5ca; font-size: 12px; font-weight: 700; cursor: pointer; }
@@ -144,7 +146,8 @@ code { font-size: .92em; }
 .save-indicator { justify-self: end; color: #9da0a8; font-size: 9px; text-transform: uppercase; letter-spacing: .11em; white-space: nowrap; }
 .save-indicator i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #53d688; box-shadow: 0 0 10px rgba(83,214,136,.6); }
 .save-error i { background: #ffb84d; box-shadow: 0 0 10px rgba(255,184,77,.55); }
-.player-stage { flex: 1 1 auto; width: min(100%, 1280px); min-height: 0; margin: 0 auto; position: relative; display: grid; place-items: center; background: #000; overflow: hidden; }
+.player-stage { flex: 1 1 auto; width: min(100%, 1280px); min-height: 0; margin: 0 auto; position: relative; display: grid; place-items: center; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
+.player-chrome-hidden .player-stage { width: 100%; max-width: none; }
 #game { width: 100%; height: 100%; min-height: 0; }
 #game:empty { display: none; }
 #game .ejs_menu_bar,
@@ -293,8 +296,8 @@ html[data-theme="atari"] .stream-header { background-color: rgba(62,36,21,.2); b
   .stream-header { height: 64px; padding-inline: 17px; }
   .brand { font-size: 12px; }
   .brand-mark { width: 25px; height: 25px; }
-  .header-action { font-size: 0; width: 38px; height: 38px; padding: 0; }
-  .header-action::first-letter { font-size: 18px; }
+  .detail-header .header-action { width: 44px; height: 44px; padding: 0; }
+  .detail-back-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .featured-hero { padding: 280px 20px 112px; }
   .hero-copy h1 { font-size: 48px; }
   .game-description { font-size: 14px; }
@@ -588,10 +591,39 @@ html[data-theme="atari"] .featured-hero { background-image: linear-gradient(90de
 }
 
 @media (max-width: 700px) {
-  .stream-header { height: 116px; padding: 0 17px 52px; }
-  .stream-header .navigation-pills { position: absolute; left: 14px; right: 14px; bottom: 10px; }
-  .stream-header .navigation-pill { min-height: 32px; padding-inline: 12px; }
-  .search-page, .collections-page, .collection-detail, .settings-page, .library-page, .admin-page { padding-top: 116px; }
+  .stream-header {
+    height: calc(124px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 58px max(14px, env(safe-area-inset-left));
+    gap: 10px;
+  }
+  .stream-header .brand > span:last-child { display: inline; font-size: 12px; }
+  .stream-header .brand-mark { width: 32px; height: 32px; }
+  .stream-header .navigation-pills {
+    position: absolute;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: 8px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    overflow: visible;
+  }
+  .stream-header .navigation-pill { min-width: 0; min-height: 42px; padding-inline: 4px; font-size: 11px; }
+  .stream-header .header-search { width: 44px; min-height: 44px; }
+  .search-page, .collections-page, .collection-detail, .settings-page, .library-page, .admin-page { padding-top: calc(124px + env(safe-area-inset-top)); }
+  .detail-header {
+    height: calc(64px + env(safe-area-inset-top));
+    min-height: calc(64px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+  .detail-header .brand { justify-self: center; }
+  .detail-feature { padding-top: calc(92px + env(safe-area-inset-top)); }
+}
+
+@media (max-width: 700px) and (orientation: landscape) {
+  .player-topbar { min-height: 50px; flex-basis: 50px; }
+  .player-help { display: none; }
 }
 
 /* Administrator-owned presentation: Collections are reusable content groups; Browse Rows are ordered display rules. */

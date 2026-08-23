@@ -34,8 +34,8 @@ emulator choice is required.
   recently-played, and recently-added sorting.
 - Administrator-managed Browse Rows for Favorites, Continue Playing, Recently Played,
   all games, genre rules, or any Collection. Rows can be created, edited, removed, and
-  reordered without changing code. Continue entries can still be removed with a
-  confirmation that also deletes the Save.
+  reordered without changing code. Continue entries can be removed per Player Profile
+  without deleting Saves, Checkpoints, history, Favorites, or library data.
 - A Featured title that stays stable while a player browses and rotates whenever a
   Player Profile is selected again.
 - Automatic SHA-256 Metadata Matches against a locally cached public NES catalog, with
@@ -52,6 +52,8 @@ emulator choice is required.
   immutable server Checkpoint generation when the player chooses **Leave player**.
 - A **Continue Playing** Shelf that resumes the newest compatible Checkpoint and
   automatically rolls back when a newer generation is unavailable or freezes the core.
+- Mobile gameplay chrome that clears the iPhone viewport after startup, honors safe
+  areas and orientation changes, and returns only after a deliberate vertical gesture.
 - Administrator-triggered rescan detects added or removed files without an image rebuild.
 - `/health` and `/api/health` endpoints.
 - A single production HTTP port, default `8090`.
@@ -244,8 +246,8 @@ new file appears after rescan. No ROM is checked into this repository.
 - Migration 011 preserves legacy single-file Saves in the database and `/saves`, but
   deliberately does not advertise them as resumable Checkpoints because their Game File
   and runtime compatibility was never recorded. The next successful **Leave player**
-  creates a versioned generation. Removing a title from Continue Playing deletes both
-  versioned Checkpoints and legacy state for that Player Profile.
+  creates a versioned generation. Removing a title from Continue Playing records only a
+  per-profile shelf dismissal; all versioned Checkpoints and legacy state remain intact.
 - Controller presets configure documented EmulatorJS defaults before startup. A browser
   may expose a particular Joy-Con orientation or third-party controller differently, so
   its built-in Control Settings screen is the fallback for unusual mappings.

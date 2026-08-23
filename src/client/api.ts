@@ -56,9 +56,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ favorite }),
     }),
+  removeFromContinuePlaying: (gameId: string) =>
+    request<{ game: GameDetail }>(`/api/games/${gameId}/continue-playing`, { method: "DELETE" }),
   launch: (gameId: string) =>
     request<{ manifest: LaunchManifest }>(`/api/games/${gameId}/launch`, { method: "POST" }),
-  deleteSave: (gameId: string) => request<void>(`/api/saves/${gameId}/state`, { method: "DELETE" }),
   correctMetadata: (gameId: string, correction: MetadataCorrectionInput) => request<{ game: GameDetail }>(`/api/admin/games/${gameId}/metadata`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(correction) }),
   resetMetadata: (gameId: string) => request<{ game: GameDetail }>(`/api/admin/games/${gameId}/metadata`, { method: "DELETE" }),
 };
