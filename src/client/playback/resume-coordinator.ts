@@ -48,7 +48,7 @@ export class ResumeCoordinator {
     const gameManager = await this.waitForGameManager(getGameManager, isCancelled);
     if (!gameManager) return { status: "fresh" };
 
-    for (const checkpoint of plan.checkpoints) {
+    for (const [index, checkpoint] of plan.checkpoints.entries()) {
       if (isCancelled()) return { status: "fresh" };
       try {
         const state = await this.transport.fetchState(checkpoint);
@@ -63,11 +63,30 @@ export class ResumeCoordinator {
       } catch (error) {
         const reason = error instanceof Error ? error.message : "Checkpoint could not be restored.";
         await this.transport.reject(checkpoint, reason).catch(() => undefined);
+        // A semantically bad state can leave the core unable to advance. Give
+        // the next rollback generation a clean runtime instead of loading it
+        // into the already-poisoned core.
+        if (index < plan.checkpoints.length - 1) {
+          await this.restartCore(gameManager, isCancelled);
+        }
       }
     }
 
-    gameManager.restart?.();
+    await this.restartCore(gameManager, isCancelled);
     return { status: "fresh" };
+  }
+
+  private async restartCore(
+    gameManager: ResumableGameManager,
+    isCancelled: () => boolean,
+  ): Promise<void> {
+    if (isCancelled()) return;
+    try {
+      gameManager.restart?.();
+    } catch {
+      // The next load attempt will provide the authoritative result.
+    }
+    await this.nextFrame();
   }
 
   private async waitForGameManager(

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   PlaybackExitCoordinator,
   controllerMappingFor,
+  createCheckpointGatedStartHandler,
   fetchGameFile,
   resolveFceummRuntimeFile,
   selectRuntimeProfile,
@@ -73,6 +74,33 @@ describe("controller preset translation", () => {
 });
 
 describe("player lifecycle", () => {
+  it("settles checkpoint restoration before exposing gameplay and ignores repeated start events", async () => {
+    let finishRestore: ((result: { status: "restored"; checkpointId: string; generation: number }) => void) | undefined;
+    const restore = vi.fn(() => new Promise<{ status: "restored"; checkpointId: string; generation: number }>((resolve) => {
+      finishRestore = resolve;
+    }));
+    const onRestoreResult = vi.fn();
+    const onRunning = vi.fn();
+    const onRestoreError = vi.fn();
+    const handleStart = createCheckpointGatedStartHandler({
+      restore,
+      onRestoreResult,
+      onRestoreError,
+      onRunning,
+      isDisposed: () => false,
+    });
+
+    handleStart();
+    handleStart();
+
+    expect(restore).toHaveBeenCalledOnce();
+    expect(onRunning).not.toHaveBeenCalled();
+    finishRestore?.({ status: "restored", checkpointId: "checkpoint-one", generation: 1 });
+    await vi.waitFor(() => expect(onRunning).toHaveBeenCalledOnce());
+    expect(onRestoreResult).toHaveBeenCalledWith({ status: "restored", checkpointId: "checkpoint-one", generation: 1 });
+    expect(onRestoreError).not.toHaveBeenCalled();
+  });
+
   it("wires the documented EmulatorJS exit callback in the pinned loader", async () => {
     const loader = await readFile(path.resolve("public/emulatorjs/loader.js"), "utf8");
     expect(loader).toContain('window.EJS_emulator.on("exit", window.EJS_onExit)');

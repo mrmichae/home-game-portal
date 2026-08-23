@@ -40,21 +40,25 @@ describe("Resume Coordinator module interface", () => {
       reject: async (checkpoint) => { rejected.push(checkpoint.id); },
     };
     let frame = 1;
-    let frozen = false;
+    let coreHealthy = true;
     const gameManager: ResumableGameManager = {
       getFrameNum: () => frame,
       getState: () => new Uint8Array([9]),
       loadState: (state) => {
         // Generation two reproduces a semantically bad load: the call appears
-        // to succeed, but the emulator stops advancing.
-        frozen = state[0] === 2;
-        frame = frozen ? 1 : 120;
+        // to succeed, but poisons the running core. A good older state cannot
+        // recover that core until the adapter performs a clean restart.
+        if (state[0] === 2) coreHealthy = false;
+        frame = coreHealthy ? 120 : 1;
       },
-      restart: vi.fn(),
+      restart: vi.fn(() => {
+        coreHealthy = true;
+        frame = 1;
+      }),
     };
     const scheduleFrame = (callback: FrameRequestCallback) => {
       queueMicrotask(() => {
-        if (!frozen) frame += 1;
+        if (coreHealthy) frame += 1;
         callback(0);
       });
       return 1;
@@ -68,7 +72,7 @@ describe("Resume Coordinator module interface", () => {
     });
     expect(rejected).toEqual(["checkpoint-new"]);
     expect(verified).toEqual(["checkpoint-good"]);
-    expect(gameManager.restart).not.toHaveBeenCalled();
+    expect(gameManager.restart).toHaveBeenCalledOnce();
   });
 
   it("captures an immutable state copy with its emulated frame", async () => {
