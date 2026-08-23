@@ -167,7 +167,34 @@ export interface LaunchManifest {
     core: "fceumm";
   };
   gameUrl: string;
-  saveStateUrl: string | null;
+  resumePlan: ResumePlan;
   controllerPreset: ControllerPresetKey;
   playerProfileKey: string;
+}
+
+export const WEB_CHECKPOINT_COMPATIBILITY = {
+  adapterKey: "emulatorjs",
+  coreKey: "fceumm",
+  runtimeVersion: "4.2.3-portal.2",
+} as const;
+
+export interface CheckpointCompatibility {
+  adapterKey: string;
+  coreKey: string;
+  runtimeVersion: string;
+}
+
+export interface ResumeCheckpoint {
+  id: string;
+  generation: number;
+  status: "candidate" | "verified";
+  capturedFrame: number;
+  stateUrl: string;
+  verifyUrl: string;
+  rejectUrl: string;
+}
+
+export interface ResumePlan {
+  captureUrl: string;
+  checkpoints: ResumeCheckpoint[];
 }

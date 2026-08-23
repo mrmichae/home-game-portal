@@ -73,13 +73,22 @@ jobs:
             http://127.0.0.1:8090/api/catalog \
             --output /tmp/container-check-catalog.json
           node -e "const fs=require('node:fs');const catalog=JSON.parse(fs.readFileSync('/tmp/container-check-catalog.json','utf8'));const game=catalog.shelf.games.find((item)=>item.displayName==='Container Check');if(!game)process.exit(1);process.stdout.write(game.id)" > /tmp/container-check-game-id
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'X-Player-Profile: household' \
+            "http://127.0.0.1:8090/api/games/$(cat /tmp/container-check-game-id)/launch" \
+            --output /tmp/container-check-launch.json
+          node -e "const fs=require('node:fs');const result=JSON.parse(fs.readFileSync('/tmp/container-check-launch.json','utf8'));const url=result.manifest?.resumePlan?.captureUrl;if(!url)process.exit(1);process.stdout.write(url)" > /tmp/container-check-capture-url
           printf 'container-save-check\n' > /tmp/container-check-expected-state
           curl --fail --silent --show-error \
-            --request PUT \
+            --request POST \
             --header 'Content-Type: application/octet-stream' \
+            --header 'X-Captured-Frame: 120' \
             --header 'X-Player-Profile: household' \
             --data-binary @/tmp/container-check-expected-state \
-            "http://127.0.0.1:8090/api/saves/$(cat /tmp/container-check-game-id)/state"
+            "http://127.0.0.1:8090$(cat /tmp/container-check-capture-url)" \
+            --output /tmp/container-check-capture.json
+          node -e "const fs=require('node:fs');const result=JSON.parse(fs.readFileSync('/tmp/container-check-capture.json','utf8'));if(result.checkpoint?.status!=='candidate'||result.checkpoint?.capturedFrame!==120)process.exit(1)"
 
       - name: Verify restart persistence boundary
         run: |
@@ -99,10 +108,22 @@ jobs:
           test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
           curl --fail --silent --show-error http://127.0.0.1:8090/health
           curl --fail --silent --show-error \
+            --request POST \
             --header 'X-Player-Profile: household' \
-            "http://127.0.0.1:8090/api/saves/$(cat /tmp/container-check-game-id)/state" \
+            "http://127.0.0.1:8090/api/games/$(cat /tmp/container-check-game-id)/launch" \
+            --output /tmp/container-check-relaunch.json
+          node -e "const fs=require('node:fs');const result=JSON.parse(fs.readFileSync('/tmp/container-check-relaunch.json','utf8'));const checkpoint=result.manifest?.resumePlan?.checkpoints?.[0];if(!checkpoint||checkpoint.status!=='candidate'||checkpoint.capturedFrame!==120)process.exit(1);fs.writeFileSync('/tmp/container-check-state-url',checkpoint.stateUrl);fs.writeFileSync('/tmp/container-check-verify-url',checkpoint.verifyUrl)"
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:8090$(cat /tmp/container-check-state-url)" \
             --output /tmp/container-check-actual-state
           cmp /tmp/container-check-expected-state /tmp/container-check-actual-state
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"observedFrame":121}' \
+            "http://127.0.0.1:8090$(cat /tmp/container-check-verify-url)" \
+            --output /tmp/container-check-verified.json
+          node -e "const fs=require('node:fs');const result=JSON.parse(fs.readFileSync('/tmp/container-check-verified.json','utf8'));if(result.checkpoint?.status!=='verified')process.exit(1)"
 
       - name: Show container logs on failure
         if: failure()

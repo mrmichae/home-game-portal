@@ -48,9 +48,10 @@ emulator choice is required.
 - Adaptive threaded FCEUmm playback when the browser exposes `SharedArrayBuffer`, with
   a compatible single-thread fallback when cross-origin isolation is unavailable.
 - Two-minute, random launch URLs that reveal neither the Library Source nor relative file path.
-- EmulatorJS browser persistence plus a server checkpoint when the player chooses
-  **Leave player** or **Save State**.
-- A **Continue Playing** Shelf that resumes Games with a synchronized checkpoint.
+- EmulatorJS browser persistence through its native **Save State** control plus an
+  immutable server Checkpoint generation when the player chooses **Leave player**.
+- A **Continue Playing** Shelf that resumes the newest compatible Checkpoint and
+  automatically rolls back when a newer generation is unavailable or freezes the core.
 - Administrator-triggered rescan detects added or removed files without an image rebuild.
 - `/health` and `/api/health` endpoints.
 - A single production HTTP port, default `8090`.
@@ -179,9 +180,9 @@ only the chosen host port. Do not map ROMs into a writable application directory
    **Rescan library**.
 3. Open the game on the NES Shelf, then press **Play**.
 4. Play with the keyboard or connected controller; no emulator selection appears.
-5. Choose **Leave player** to capture the latest state and write it to `/saves` before
-   navigating back to the Game detail view. **Save State** creates the same checkpoint
-   without leaving.
+5. Choose **Leave player** to capture a new immutable Checkpoint generation in `/saves`
+   before navigating back to the Game detail view. EmulatorJS’s **Save State** control
+   independently keeps a browser-local fallback.
 6. The Game appears under **Continue Playing**. On the next launch, the Playback
    Adapter supplies the server state to EmulatorJS automatically.
 
@@ -217,7 +218,8 @@ npm run check
 
 The automated suite covers recursive scanning and rescan discovery, filename
 normalization, preferred-Edition launch resolution, scoped launch expiry, path
-traversal rejection, symlink avoidance, per-profile save-state round trips, Favorites,
+traversal rejection, symlink avoidance, per-profile Checkpoint generation retention,
+runtime/Game File isolation, verification, rollback selection, Favorites,
 Play Sessions, library sorting, search matching, Collection generation, Metadata Match
 corrections, artwork caching, avatar validation, Player Profile identity updates,
 deployment-default precedence, persisted Library Source changes, validation failures,
@@ -239,9 +241,11 @@ new file appears after rescan. No ROM is checked into this repository.
 - Player Profiles are household-local and not authenticated. Selecting the Household
   administrator profile grants Metadata Match controls, so this build must remain on a
   trusted LAN until profile PINs or another authorization layer exists.
-- Existing Household Saves retain their original `household/<game-id>` location. New
-  profiles receive isolated Save directories and independent Favorites, Play Sessions,
-  themes, accent preferences, and controller presets.
+- Migration 011 preserves legacy single-file Saves in the database and `/saves`, but
+  deliberately does not advertise them as resumable Checkpoints because their Game File
+  and runtime compatibility was never recorded. The next successful **Leave player**
+  creates a versioned generation. Removing a title from Continue Playing deletes both
+  versioned Checkpoints and legacy state for that Player Profile.
 - Controller presets configure documented EmulatorJS defaults before startup. A browser
   may expose a particular Joy-Con orientation or third-party controller differently, so
   its built-in Control Settings screen is the fallback for unusual mappings.
@@ -271,10 +275,11 @@ new file appears after rescan. No ROM is checked into this repository.
   `DATA_DIR/metadata`. If that download is unavailable, scanning still succeeds with the
   local fallback; a later rescan retries. Archive scanning and firmware handling remain
   out of scope.
-- Server persistence covers checkpoints created by **Leave player** and **Save State**.
-  Leave-time capture uses the pinned EmulatorJS runtime's `gameManager.getState()`
-  method behind the Playback Adapter; this private compatibility point must be
-  reverified before upgrading EmulatorJS.
+- Server persistence covers Checkpoints created by **Leave player**. Leave-time capture
+  uses the pinned EmulatorJS runtime's `gameManager.getState()` method behind the
+  Playback Adapter; this private compatibility point must be reverified before upgrading
+  EmulatorJS. The native **Save State** control remains browser-local and is no longer
+  intercepted, preserving an independent recovery path.
 - Before EmulatorJS starts, the web Playback Adapter downloads and validates the scoped
   server Game File, then exposes it to the runtime through a revocable browser-local URL.
   This avoids EmulatorJS's opaque network failure behind some container/reverse-proxy
@@ -285,10 +290,15 @@ new file appears after rescan. No ROM is checked into this repository.
 - EmulatorJS keeps battery-backed save RAM in browser storage. Automatic server SRAM
   restore would require an undocumented startup injection API in 4.2.3, so it remains
   deferred behind the Playback Adapter rather than coupling it to the Catalog.
-- The latest server state is overwritten atomically. There are no slots, Save history,
-  conflict resolution, profile authentication, backups, or quota controls.
-- Launch URLs are in-memory and expire after two minutes. Restarting Node invalidates
-  outstanding URLs without affecting saves or the Catalog.
+- Server Checkpoints are immutable and checksummed. The three newest compatible
+  candidate/verified generations are retained; failed generations are excluded and the
+  Playback Adapter tries the preceding generation automatically. Manual slots, cross-
+  device conflict resolution, profile authentication, backups, and quota controls remain
+  future work.
+- Game File launch URLs are in-memory and expire after two minutes. The corresponding
+  Checkpoint-capture session remains valid for up to 24 hours so normal play sessions can
+  save on exit. Restarting Node invalidates outstanding URLs and capture sessions without
+  affecting existing Checkpoints or the Catalog.
 - The scanner hashes every discovered file and ignores symlinks. Large libraries will
   eventually need incremental/background job controls.
 - The built-in Node 22 `node:sqlite` API is used to keep the container small. It emits
@@ -317,16 +327,18 @@ The server launch manifest carries Platform identity and Emulator Profile policy
 separately from its web-only runtime fields. A future native Apple TV client can use the
 same Platform capability while supplying its own native Playback Adapter and compatible
 core. It is not required to embed EmulatorJS or honor the browser’s FCEUmm implementation.
-This decision is recorded in `docs/adr/0001-client-specific-emulator-adapters.md`.
+This decision is recorded in `docs/adr/0001-client-specific-emulator-adapters.md`;
+runtime-scoped Checkpoint generations are recorded in
+`docs/adr/0002-version-and-scope-checkpoints-by-runtime.md`.
 
 ## Material departures from the specification
 
 There is one deliberate Milestone 1 narrowing: full automatic server-side SRAM sync is
 not implemented because EmulatorJS 4.2.3 does not expose a documented startup SRAM
-injection API. Server save-state synchronization on **Leave player** and **Save State**
-is complete. The leave-time capture call is contained inside
-`EmulatorJsPlaybackAdapter`, preserving the seam for a future supported synchronization
-adapter.
+injection API. Server Checkpoint synchronization on **Leave player** is complete;
+browser-native **Save State** persistence remains deliberately independent. The
+leave-time capture call is contained behind `EmulatorJsPlaybackAdapter` and
+`ResumeCoordinator`, preserving the seam for a future supported synchronization adapter.
 
 The `/artwork` volume is now implemented for the persistent artwork cache. `/firmware`
 remains omitted because this NES-only slice does not use firmware.

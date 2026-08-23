@@ -24,6 +24,10 @@ _Avoid_: Game emulator setting, core selection
 A client-owned translator from a resolved Emulator Profile to that client’s emulator implementation.
 _Avoid_: Platform, core
 
+**Checkpoint**:
+An immutable, runtime-specific snapshot captured for one Edition and Player Profile. Checkpoints are versioned, verified after restore, and may roll back to an earlier compatible generation.
+_Avoid_: Game File, universally portable Save
+
 **Metadata Match**:
 The presentation metadata associated with a Game, including administrator corrections that survive Library Source scans.
 _Avoid_: ROM metadata
