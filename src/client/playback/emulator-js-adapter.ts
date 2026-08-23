@@ -1,5 +1,5 @@
 import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest } from "../../domain/types";
-import { ResumeCoordinator, type ResumableGameManager } from "./resume-coordinator";
+import { ResumeCoordinator, type RestoreResult, type ResumableGameManager } from "./resume-coordinator";
 
 type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
 const emulatorJsAssetVersion = WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion;
@@ -115,6 +115,37 @@ function fourPlayerMapping(playerOne: EmulatorDefaultControls[0]): EmulatorDefau
   return { 0: structuredClone(playerOne), 1: {}, 2: {}, 3: {} };
 }
 
+interface CheckpointGatedStartOptions {
+  restore: () => Promise<RestoreResult>;
+  onRestoreResult: (result: RestoreResult) => void;
+  onRestoreError: () => void;
+  onRunning: () => void;
+  isDisposed: () => boolean;
+}
+
+/**
+ * EmulatorJS exposes a repeatable start event, while checkpoint restoration is
+ * a one-time startup transition. Keep gameplay behind that transition so a
+ * delayed restore or rollback can never interrupt an already-running session.
+ */
+export function createCheckpointGatedStartHandler(options: CheckpointGatedStartOptions): () => void {
+  let started = false;
+  return () => {
+    if (started || options.isDisposed()) return;
+    started = true;
+    void options.restore()
+      .then((result) => {
+        if (!options.isDisposed()) options.onRestoreResult(result);
+      })
+      .catch(() => {
+        if (!options.isDisposed()) options.onRestoreError();
+      })
+      .finally(() => {
+        if (!options.isDisposed()) options.onRunning();
+      });
+  };
+}
+
 export class PlaybackExitCoordinator {
   private isUnmounting = false;
   private hasExited = false;
@@ -194,31 +225,36 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
     host.EJS_Buttons = { netplay: false, settings: false, exitEmulation: false };
     host.EJS_ready = callbacks.onReady;
-    host.EJS_onGameStart = () => {
-      running = true;
-      this.saveCurrentState = async () => {
-        const gameManager = resumableGameManager(host.EJS_emulator?.gameManager);
-        if (!gameManager) throw new Error("The game is not ready to create a checkpoint.");
-        callbacks.onSaveStatus("syncing");
-        try {
-          await this.resumeCoordinator.capture(manifest.resumePlan, gameManager);
-          callbacks.onSaveStatus("saved");
-        } catch (error) {
-          callbacks.onSaveStatus("error");
-          throw error;
-        }
-      };
-      window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true }));
-      callbacks.onRunning();
-      void this.resumeCoordinator.restore(
+    host.EJS_onGameStart = createCheckpointGatedStartHandler({
+      restore: () => this.resumeCoordinator.restore(
         manifest.resumePlan,
         () => resumableGameManager(host.EJS_emulator?.gameManager),
         () => disposed,
-      ).then((result) => {
+      ),
+      onRestoreResult: (result) => {
         if (result.status === "restored") callbacks.onSaveStatus("loaded");
         if (result.status === "fresh") callbacks.onSaveStatus("fresh");
-      }).catch(() => callbacks.onSaveStatus("error"));
-    };
+      },
+      onRestoreError: () => callbacks.onSaveStatus("error"),
+      onRunning: () => {
+        running = true;
+        this.saveCurrentState = async () => {
+          const gameManager = resumableGameManager(host.EJS_emulator?.gameManager);
+          if (!gameManager) throw new Error("The game is not ready to create a checkpoint.");
+          callbacks.onSaveStatus("syncing");
+          try {
+            await this.resumeCoordinator.capture(manifest.resumePlan, gameManager);
+            callbacks.onSaveStatus("saved");
+          } catch (error) {
+            callbacks.onSaveStatus("error");
+            throw error;
+          }
+        };
+        window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true }));
+        callbacks.onRunning();
+      },
+      isDisposed: () => disposed,
+    });
     // Do not register the load/save state events. EmulatorJS skips its own
     // IndexedDB behavior whenever either event has a listener; leaving both
     // alone preserves browser-native Save State and Load State as an independent
