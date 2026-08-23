@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => {
     server: {
       host: environment.DEV_UI_HOST ?? "0.0.0.0",
       port: parseDevelopmentPort(environment.DEV_UI_PORT),
+      // A dropped HMR WebSocket makes Vite reload the document when it reconnects.
+      // The portal is commonly opened through LAN proxies whose idle timeout is
+      // shorter than a play session, so preserve the page/runtime lifecycle and
+      // require an intentional browser refresh after development changes.
+      hmr: false,
       proxy: {
         "/api": serverUrl,
         "/health": serverUrl,
