@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import type { LaunchManifest } from "../../domain/types";
 import { api } from "../api";
 import { Spinner } from "../components";
+import { gameplayChromeVisibility, isDeliberateVerticalSwipe, isDeliberateVerticalWheel, type GesturePoint } from "../gameplay-chrome";
 import { EmulatorJsPlaybackAdapter } from "../playback/emulator-js-adapter";
 
 type PlayerStatus = "preparing" | "loading" | "running" | "error";
@@ -15,10 +16,29 @@ export function PlayerPage(): React.JSX.Element {
   const [status, setStatus] = useState<PlayerStatus>("preparing");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [leaving, setLeaving] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const failed = useRef(false);
   const running = useRef(false);
   const leavingRef = useRef(false);
+  const gestureStart = useRef<GesturePoint | null>(null);
+  const gestureRevealedChrome = useRef(false);
+  const chromeHideTimer = useRef<number | null>(null);
+
+  const clearChromeTimer = () => {
+    if (chromeHideTimer.current !== null) window.clearTimeout(chromeHideTimer.current);
+    chromeHideTimer.current = null;
+  };
+
+  const revealChrome = () => {
+    if (status !== "running") return;
+    clearChromeTimer();
+    setChromeVisible((current) => gameplayChromeVisibility(current, "deliberate-vertical-gesture"));
+    chromeHideTimer.current = window.setTimeout(() => {
+      setChromeVisible((current) => gameplayChromeVisibility(current, "gameplay-input"));
+      chromeHideTimer.current = null;
+    }, 4_500);
+  };
 
   const leavePlayer = async () => {
     if (leavingRef.current) return;
@@ -35,6 +55,30 @@ export function PlayerPage(): React.JSX.Element {
   };
 
   const focusPlayer = () => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true });
+
+  const beginGameplayGesture = (event: React.PointerEvent<HTMLElement>) => {
+    focusPlayer();
+    if (status === "running" && chromeVisible) {
+      clearChromeTimer();
+      setChromeVisible((current) => gameplayChromeVisibility(current, "gameplay-input"));
+    }
+    if (event.pointerType === "touch") {
+      gestureStart.current = { x: event.clientX, y: event.clientY };
+      gestureRevealedChrome.current = false;
+    }
+  };
+
+  const continueGameplayGesture = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "touch" || !gestureStart.current || gestureRevealedChrome.current) return;
+    if (!isDeliberateVerticalSwipe(gestureStart.current, { x: event.clientX, y: event.clientY })) return;
+    gestureRevealedChrome.current = true;
+    revealChrome();
+  };
+
+  const endGameplayGesture = () => {
+    gestureStart.current = null;
+    gestureRevealedChrome.current = false;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -70,15 +114,32 @@ export function PlayerPage(): React.JSX.Element {
     });
   }, [adapter, gameId, manifest]);
 
+  useEffect(() => {
+    if (status === "running") {
+      clearChromeTimer();
+      setChromeVisible((current) => gameplayChromeVisibility(current, "game-running"));
+    }
+    return clearChromeTimer;
+  }, [status]);
+
   return (
-    <main className="player-page">
-      <header className="player-topbar">
+    <main className={`player-page player-chrome-${chromeVisible ? "visible" : "hidden"}`}>
+      {chromeVisible && <header className="player-topbar">
         <button type="button" className="player-back" onClick={() => void leavePlayer()} disabled={leaving}>{leaving ? "Saving…" : "← Leave player"}</button>
         <strong>{manifest?.gameName ?? "Preparing game"}</strong>
         <SaveIndicator status={saveStatus} hasExistingSave={Boolean(manifest?.resumePlan.checkpoints.length)} />
-      </header>
+      </header>}
 
-      <section className="player-stage" aria-label="Game player" onPointerDown={focusPlayer}>
+      <section
+        className="player-stage"
+        aria-label="Game player. Swipe vertically or press Escape to show player controls."
+        onPointerDown={beginGameplayGesture}
+        onPointerMove={continueGameplayGesture}
+        onPointerUp={endGameplayGesture}
+        onPointerCancel={endGameplayGesture}
+        onWheel={(event) => { if (isDeliberateVerticalWheel(event.deltaX, event.deltaY)) revealChrome(); }}
+        onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); revealChrome(); } }}
+      >
         <div id="game" />
         {status !== "running" && (
           <div className={`player-overlay${status === "error" ? " player-error" : ""}`}>
@@ -96,10 +157,10 @@ export function PlayerPage(): React.JSX.Element {
           </div>
         )}
       </section>
-      <footer className="player-help">
+      {chromeVisible && <footer className="player-help">
         <span>Progress saves automatically when you leave.</span>
         <span><b>Save State</b> keeps a browser checkpoint as an independent fallback.</span>
-      </footer>
+      </footer>}
     </main>
   );
 }

@@ -72,6 +72,7 @@ export interface GameSummary {
   universes: string[];
   coverUrl: string;
   hasServerSave: boolean;
+  isContinuePlaying: boolean;
   saveUpdatedAt: string | null;
   isFavorite: boolean;
   lastPlayedAt: string | null;

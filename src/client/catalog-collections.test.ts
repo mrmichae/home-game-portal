@@ -45,6 +45,7 @@ function game(id: string, displayName: string, series: string | null, universes:
     universes,
     coverUrl: "/cover.png",
     hasServerSave: false,
+    isContinuePlaying: false,
     saveUpdatedAt: null,
     isFavorite: false,
     lastPlayedAt: null,

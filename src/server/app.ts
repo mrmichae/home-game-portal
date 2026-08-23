@@ -333,6 +333,16 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     }
   });
 
+  app.delete("/api/games/:gameId/continue-playing", (request, response) => {
+    try {
+      const game = catalog.dismissContinuePlaying(request.params.gameId, new Date(), playerKeyFor(request));
+      return response.json({ game });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "That game could not be removed from Continue Playing.";
+      return response.status(message === "Game not found." ? 404 : 409).json({ message });
+    }
+  });
+
   app.get("/api/playback/files/:sessionId", (request, response) => {
     const absolutePath = playbackResolver.resolveSession(request.params.sessionId);
     if (!absolutePath) {

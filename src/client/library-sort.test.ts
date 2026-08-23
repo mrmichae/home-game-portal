@@ -20,5 +20,5 @@ describe("My Library sorting", () => {
 });
 
 function game(displayName: string, releaseYear: number, addedAt: string, lastPlayedAt: string | null): GameSummary {
-  return { id: displayName, displayName, platform: "nes", platformName: "Nintendo Entertainment System", addedAt, byteSize: 1, releaseYear, description: "", genres: ["Action"], series: null, universes: [], coverUrl: "", hasServerSave: false, saveUpdatedAt: null, isFavorite: false, lastPlayedAt, metadataStatus: "curated" };
+  return { id: displayName, displayName, platform: "nes", platformName: "Nintendo Entertainment System", addedAt, byteSize: 1, releaseYear, description: "", genres: ["Action"], series: null, universes: [], coverUrl: "", hasServerSave: false, isContinuePlaying: false, saveUpdatedAt: null, isFavorite: false, lastPlayedAt, metadataStatus: "curated" };
 }
