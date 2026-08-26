@@ -54,6 +54,7 @@ interface EmulatorWindow extends Window {
   EJS_emulator?: {
     callEvent?: (event: string) => void;
     gameManager?: EmulatorGameManager;
+    paused?: boolean;
   };
   EJS_Runtime?: (options?: RuntimeOptions) => unknown;
 }
@@ -260,7 +261,11 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
           if (!gameManager) throw new Error("The game is not ready to create a checkpoint.");
           callbacks.onSaveStatus("syncing");
           try {
-            await this.resumeCoordinator.capture(manifest.resumePlan, gameManager);
+            await this.resumeCoordinator.capture(
+              manifest.resumePlan,
+              gameManager,
+              () => host.EJS_emulator?.paused === true,
+            );
             callbacks.onSaveStatus("saved");
           } catch (error) {
             callbacks.onSaveStatus("error");

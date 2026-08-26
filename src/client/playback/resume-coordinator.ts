@@ -29,13 +29,25 @@ export class ResumeCoordinator {
     private readonly transport: CheckpointTransport = new HttpCheckpointTransport(),
     private readonly scheduleFrame: (callback: FrameRequestCallback) => number = (callback) => window.requestAnimationFrame(callback),
     private readonly validationAttempts = 120,
+    private readonly requiredProgressSamples = 30,
   ) {}
 
-  async capture(plan: ResumePlan, gameManager: ResumableGameManager): Promise<void> {
-    const capturedFrame = gameManager.getFrameNum();
+  async capture(
+    plan: ResumePlan,
+    gameManager: ResumableGameManager,
+    isDeliberatelyPaused: () => boolean = () => false,
+  ): Promise<void> {
+    // Never turn a stalled or poisoned runtime into the newest checkpoint.
+    // This is deliberately the same health gate used by restore: capture and
+    // restore must agree on what a viable core looks like.
+    const capturedFrame = isDeliberatelyPaused()
+      ? gameManager.getFrameNum()
+      : await this.waitForCoreProgress(gameManager, () => false);
+    if (capturedFrame === null || !Number.isSafeInteger(capturedFrame) || capturedFrame < 0) {
+      throw new Error("The game stopped advancing before its checkpoint could be created.");
+    }
     const state = gameManager.getState();
     if (!state.byteLength) throw new Error("The game did not provide checkpoint data.");
-    if (!Number.isSafeInteger(capturedFrame) || capturedFrame < 0) throw new Error("The game did not provide a checkpoint frame.");
     await this.transport.capture(plan.captureUrl, state.slice(), capturedFrame);
   }
 
@@ -111,12 +123,18 @@ export class ResumeCoordinator {
     isCancelled: () => boolean,
   ): Promise<number | null> {
     let priorFrame: number | null = null;
+    let progressSamples = 0;
     for (let attempt = 0; attempt < this.validationAttempts; attempt += 1) {
       if (isCancelled()) return null;
       await this.nextFrame();
       try {
         const observedFrame = gameManager.getFrameNum();
-        if (priorFrame !== null && observedFrame > priorFrame) return observedFrame;
+        if (!Number.isSafeInteger(observedFrame) || observedFrame < 0) return null;
+        if (priorFrame !== null && observedFrame < priorFrame) return null;
+        if (priorFrame !== null && observedFrame > priorFrame) {
+          progressSamples += 1;
+          if (progressSamples >= this.requiredProgressSamples) return observedFrame;
+        }
         priorFrame = observedFrame;
       } catch {
         // A failed state can briefly make the core unavailable. Allow rollback.
