@@ -5,7 +5,9 @@ import {
   PlaybackExitCoordinator,
   controllerMappingFor,
   createCheckpointGatedStartHandler,
+  disableImplicitCoreRestart,
   fetchGameFile,
+  isBenignRuntimeRejection,
   resolveFceummRuntimeFile,
   selectRuntimeProfile,
 } from "./emulator-js-adapter";
@@ -74,6 +76,19 @@ describe("controller preset translation", () => {
 });
 
 describe("player lifecycle", () => {
+  it("neutralizes a stale EmulatorJS soft-load timer before a resumed game starts", () => {
+    const host = { EJS_softLoad: 30 };
+
+    disableImplicitCoreRestart(host);
+
+    expect(host.EJS_softLoad).toBe(0);
+  });
+
+  it("does not treat an unavailable screen wake lock as a playback failure", () => {
+    expect(isBenignRuntimeRejection(new DOMException("Wake Lock permission request denied", "NotAllowedError"))).toBe(true);
+    expect(isBenignRuntimeRejection(new Error("WebAssembly failed"))).toBe(false);
+  });
+
   it("settles checkpoint restoration before exposing gameplay and ignores repeated start events", async () => {
     let finishRestore: ((result: { status: "restored"; checkpointId: string; generation: number }) => void) | undefined;
     const restore = vi.fn(() => new Promise<{ status: "restored"; checkpointId: string; generation: number }>((resolve) => {
