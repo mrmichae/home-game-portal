@@ -40,6 +40,7 @@ interface EmulatorWindow extends Window {
   EJS_backgroundColor?: string;
   EJS_color?: string;
   EJS_startButtonName?: string;
+  EJS_softLoad?: number;
   EJS_loadStateURL?: string;
   EJS_defaultOptions?: Record<string, string>;
   EJS_defaultControls?: EmulatorDefaultControls;
@@ -124,6 +125,21 @@ interface CheckpointGatedStartOptions {
 }
 
 /**
+ * `EJS_softLoad` is a global, optional EmulatorJS integration setting. When it
+ * is positive, EmulatorJS schedules a core restart after that many seconds.
+ * The portal owns resume explicitly, so a value left behind by an older player
+ * instance must never become an implicit mid-session restart policy.
+ */
+export function disableImplicitCoreRestart(host: { EJS_softLoad?: number }): void {
+  host.EJS_softLoad = 0;
+}
+
+export function isBenignRuntimeRejection(reason: unknown): boolean {
+  if (!(reason instanceof Error)) return false;
+  return reason.name === "NotAllowedError" && /wake lock/i.test(reason.message);
+}
+
+/**
  * EmulatorJS exposes a repeatable start event, while checkpoint restoration is
  * a one-time startup transition. Keep gameplay behind that transition so a
  * delayed restore or rollback can never interrupt an already-running session.
@@ -199,6 +215,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     };
 
     // These resolved facts remain inside the adapter; the player never chooses them.
+    disableImplicitCoreRestart(host);
     host.EJS_player = "#game";
     // Fetch the scoped server URL ourselves before starting EmulatorJS. Its internal
     // downloader reports only "Network Error" in some reverse-proxy/container setups.
@@ -271,6 +288,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
       if (!running) {
+        if (isBenignRuntimeRejection(event.reason)) {
+          event.preventDefault();
+          return;
+        }
         console.error("[Home Game Portal] EmulatorJS rejected a startup task", event.reason);
         reportError(playerMessage(event.reason));
       }
