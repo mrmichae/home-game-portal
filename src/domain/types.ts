@@ -176,7 +176,10 @@ export interface LaunchManifest {
 export const WEB_CHECKPOINT_COMPATIBILITY = {
   adapterKey: "emulatorjs",
   coreKey: "fceumm",
-  runtimeVersion: "4.2.3-portal.2",
+  // portal.2 checkpoints may have been promoted after only one advancing
+  // frame, then re-captured from a stalled runtime. Keep those immutable rows
+  // for rollback/inspection, but never advertise them to the corrected player.
+  runtimeVersion: "4.2.3-portal.3",
 } as const;
 
 export interface CheckpointCompatibility {
