@@ -200,6 +200,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     const runtimeProfile = selectRuntimeProfile({
       crossOriginIsolated: window.crossOriginIsolated === true,
       hasSharedArrayBuffer: typeof window.SharedArrayBuffer === "function",
+      userAgent: window.navigator.userAgent,
+      vendor: window.navigator.vendor,
+      platform: window.navigator.platform,
+      maxTouchPoints: window.navigator.maxTouchPoints,
     });
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
     const startupRequest = new AbortController();
@@ -389,8 +393,12 @@ export function resolveFceummRuntimeFile(
 export function selectRuntimeProfile(environment: {
   crossOriginIsolated: boolean;
   hasSharedArrayBuffer: boolean;
+  userAgent?: string;
+  vendor?: string;
+  platform?: string;
+  maxTouchPoints?: number;
 }): RuntimeProfile {
-  if (environment.crossOriginIsolated && environment.hasSharedArrayBuffer) {
+  if (environment.crossOriginIsolated && environment.hasSharedArrayBuffer && !isAppleWebKit(environment)) {
     return {
       threaded: true,
       scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
@@ -402,6 +410,25 @@ export function selectRuntimeProfile(environment: {
     scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
     wasmPath: "/emulatorjs/cores/fceumm_libretro.wasm",
   };
+}
+
+function isAppleWebKit(environment: {
+  userAgent?: string;
+  vendor?: string;
+  platform?: string;
+  maxTouchPoints?: number;
+}): boolean {
+  const userAgent = environment.userAgent ?? "";
+  const isAppleMobile = /iPad|iPhone|iPod/i.test(userAgent)
+    || (environment.platform === "MacIntel" && (environment.maxTouchPoints ?? 0) > 1);
+  const isDesktopSafari = /Safari/i.test(userAgent)
+    && /Apple/i.test(environment.vendor ?? "")
+    && !/(Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|FxiOS)/i.test(userAgent);
+
+  // WebKit can retain or over-count SharedArrayBuffer-backed Wasm memory across
+  // workers and reloads. FCEUmm is fast enough without pthreads on Apple devices,
+  // so prefer its lower-overhead single-thread runtime there.
+  return isAppleMobile || isDesktopSafari;
 }
 
 function playerMessage(reason: unknown): string {

@@ -168,4 +168,46 @@ describe("runtime selection", () => {
       scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
     });
   });
+
+  it("avoids the threaded WebAssembly runtime in Safari on macOS and iOS", () => {
+    const macSafari = {
+      crossOriginIsolated: true,
+      hasSharedArrayBuffer: true,
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15",
+      vendor: "Apple Computer, Inc.",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    };
+    const iphoneSafari = {
+      crossOriginIsolated: true,
+      hasSharedArrayBuffer: true,
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1",
+      vendor: "Apple Computer, Inc.",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+    };
+
+    expect(selectRuntimeProfile(macSafari)).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
+    });
+    expect(selectRuntimeProfile(iphoneSafari)).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
+    });
+  });
+
+  it("keeps threaded playback for cross-origin-isolated Chromium", () => {
+    expect(selectRuntimeProfile({
+      crossOriginIsolated: true,
+      hasSharedArrayBuffer: true,
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36",
+      vendor: "Google Inc.",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    })).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
+    });
+  });
 });
