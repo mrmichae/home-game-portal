@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { BrowseRow, GameSummary } from "../../domain/types";
 import { selectFeaturedGame } from "../../domain/catalog-presentation";
+import { platformShortName } from "../../domain/platforms";
 import { api, type CatalogResponse } from "../api";
 import { CoverArt, GamePosterCard, PortalHeader, Spinner } from "../components";
 import { usePlayerProfile } from "../player-profile";
@@ -120,7 +121,7 @@ function FeaturedHero({ game }: { game: GameSummary }): React.JSX.Element {
 }
 
 function GameMetadata({ game }: { game: GameSummary }): React.JSX.Element {
-  return <><h1>{game.displayName}</h1><div className="metadata-line"><span>{game.releaseYear}</span><span>NES</span><span>{game.genres.slice(0, 2).join(" · ")}</span></div><p className="game-description">{game.description}</p></>;
+  return <><h1>{game.displayName}</h1><div className="metadata-line"><span>{game.releaseYear}</span><span>{platformShortName(game.platform)}</span><span>{game.genres.slice(0, 2).join(" · ")}</span></div><p className="game-description">{game.description}</p></>;
 }
 
 function HeroActions({ game }: { game: GameSummary }): React.JSX.Element {

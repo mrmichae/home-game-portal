@@ -21,7 +21,7 @@ describe("Versioned Checkpoint Store module interface", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "Test Game.nes", displayName: "Test Game", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
     ]);
     const game = catalog.getGame(catalog.listGames()[0].id)!;
     const store = new VersionedCheckpointStore(savesRoot, database);
@@ -54,7 +54,7 @@ describe("Versioned Checkpoint Store module interface", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "Test Game.nes", displayName: "Test Game", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
     ]);
     const game = catalog.getGame(catalog.listGames()[0].id)!;
     const store = new VersionedCheckpointStore(savesRoot, database);
@@ -81,7 +81,7 @@ describe("Versioned Checkpoint Store module interface", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "Test Game.nes", displayName: "Test Game", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
     ]);
     const game = catalog.getGame(catalog.listGames()[0].id)!;
     const store = new VersionedCheckpointStore(savesRoot, database);
@@ -110,7 +110,7 @@ describe("Versioned Checkpoint Store module interface", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "Test Game.nes", displayName: "Test Game", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
     ]);
     const game = catalog.getGame(catalog.listGames()[0].id)!;
     const store = new VersionedCheckpointStore(savesRoot, database);
@@ -136,7 +136,7 @@ describe("Versioned Checkpoint Store module interface", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "Test Game.nes", displayName: "Test Game", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
     ]);
     const game = catalog.getGame(catalog.listGames()[0].id)!;
     const store = new VersionedCheckpointStore(savesRoot, database);

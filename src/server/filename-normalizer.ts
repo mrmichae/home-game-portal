@@ -1,6 +1,6 @@
 const RELEASE_TAG = /\s*(?:\[[^\]]*\]|\((?:usa|europe|japan|world|rev(?:ision)?\s*\w*|v\d[^)]*|proto(?:type)?|beta|demo|unl|unlicensed|en|fr|de|es|it|ja|[a-z]{2}(?:,[a-z]{2})+)\))\s*$/i;
 const LEADING_INDEX = /^\s*\d{1,4}\s*[-.)_]\s*/;
-const ROM_EXTENSION = /\.nes$/i;
+const ROM_EXTENSION = /\.(?:nes|sfc|smc|snes)$/i;
 const SMALL_WORDS = new Set(["a", "an", "and", "at", "for", "in", "of", "on", "or", "the", "to"]);
 
 export function normalizeGameFilename(filename: string): string {

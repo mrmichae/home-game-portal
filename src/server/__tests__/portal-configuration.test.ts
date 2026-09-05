@@ -68,7 +68,7 @@ describe("Portal Configuration", () => {
 
     expect(settings.emulators.map((profile) => profile.platform.key)).toEqual(["nes", "snes", "atari2600"]);
     expect(settings.emulators[0]).toMatchObject({ enabled: true, policy: "platform-default", webPlayback: { adapterKey: "emulatorjs", coreKey: "fceumm" } });
-    expect(settings.emulators[1].webPlayback).toBeNull();
+    expect(settings.emulators[1]).toMatchObject({ enabled: true, webPlayback: { adapterKey: "emulatorjs", coreKey: "snes9x" } });
     database.close();
   });
 });

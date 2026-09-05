@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type {
   DiscoveredGameFile,
   GameDetail,
@@ -84,7 +85,7 @@ export class CatalogRepository {
          VALUES (?, ?, ?, 'nes')
          ON CONFLICT(id) DO NOTHING`,
       )
-      .run(SOURCE_ID, "NES Library", rootPath);
+      .run(SOURCE_ID, "Game Library", rootPath);
   }
 
   getLibrarySource(): LibrarySourceRecord {
@@ -117,8 +118,8 @@ export class CatalogRepository {
     `);
     const upsertEdition = this.database.prepare(`
       INSERT INTO editions(id, game_id, platform_key, preferred, active)
-      VALUES (?, ?, 'nes', 1, 1)
-      ON CONFLICT(id) DO UPDATE SET game_id = excluded.game_id, active = 1
+      VALUES (?, ?, ?, 1, 1)
+      ON CONFLICT(id) DO UPDATE SET game_id = excluded.game_id, platform_key = excluded.platform_key, active = 1
     `);
     const upsertFile = this.database.prepare(`
       INSERT INTO game_files(
@@ -146,6 +147,7 @@ export class CatalogRepository {
 
       for (const file of files) {
         if (!existingStatement.get(SOURCE_ID, file.relativePath)) added += 1;
+        const platform = file.platform ?? platformForRelativePath(file.relativePath);
         const prior = this.database.prepare(`
           SELECT editions.game_id, games.added_at
           FROM game_files
@@ -153,8 +155,10 @@ export class CatalogRepository {
           JOIN games ON games.id = editions.game_id
           WHERE game_files.library_source_id = ? AND game_files.relative_path = ?
         `).get(SOURCE_ID, file.relativePath) as unknown as { game_id: string; added_at: string } | undefined;
-        const gameId = stableId("game", `nes\0${gameIdentityKey(file.displayName)}`);
-        const editionId = stableId("edition", file.contentHash);
+        // Preserve historical NES identifiers so existing progress and favorites stay
+        // attached. New platforms include their identity to avoid cross-platform merges.
+        const gameId = stableId("game", `${platform}\0${gameIdentityKey(file.displayName)}`);
+        const editionId = stableId("edition", platform === "nes" ? file.contentHash : `${platform}\0${file.contentHash}`);
         const fileId = stableId("file", `${SOURCE_ID}\0${file.relativePath}`);
         upsertGame.run(gameId, file.displayName, now, now);
         groupedGameIds.add(gameId);
@@ -164,7 +168,7 @@ export class CatalogRepository {
             UPDATE games SET added_at = CASE WHEN added_at > ? THEN ? ELSE added_at END WHERE id = ?
           `).run(prior.added_at, prior.added_at, gameId);
         }
-        upsertEdition.run(editionId, gameId);
+        upsertEdition.run(editionId, gameId, platform);
         upsertFile.run(
           fileId,
           editionId,
@@ -174,7 +178,7 @@ export class CatalogRepository {
           file.byteSize,
           file.modifiedAtMs,
         );
-        const metadataMatch = matchesByHash.get(file.contentHash);
+        const metadataMatch = platform === "nes" ? matchesByHash.get(file.contentHash) : undefined;
         if (metadataMatch) {
           this.database.prepare(`
             INSERT INTO metadata_matches(
@@ -302,7 +306,7 @@ export class CatalogRepository {
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
                AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = $core
+               AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
                AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
@@ -353,7 +357,7 @@ export class CatalogRepository {
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
                AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = $core
+               AND candidate_checkpoint.core_key = CASE candidate.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
                AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
@@ -373,7 +377,8 @@ export class CatalogRepository {
       .all({
         $player: playerKey,
         $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $snesCore: "snes9x",
         $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as GameRow[];
     return rows.map(toGameSummary);
@@ -396,7 +401,7 @@ export class CatalogRepository {
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
                AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = $core
+               AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
                AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
@@ -447,7 +452,7 @@ export class CatalogRepository {
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
                AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = $core
+               AND candidate_checkpoint.core_key = CASE candidate.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
                AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
@@ -466,12 +471,13 @@ export class CatalogRepository {
       .get({
         $player: playerKey,
         $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $snesCore: "snes9x",
         $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
         $game: gameId,
       }) as unknown as GameRow | undefined;
     if (!row) return null;
-    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl };
+    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path, row.platform_key).coverUrl };
   }
 
   getPreferredGameFile(gameId: string, playerKey = DEFAULT_PLAYER_KEY): string | null {
@@ -497,7 +503,7 @@ export class CatalogRepository {
            WHERE checkpoint.edition_id = editions.id
              AND checkpoint.player_key = $player
              AND checkpoint.adapter_key = $adapter
-             AND checkpoint.core_key = $core
+             AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
              AND checkpoint.runtime_version = $runtime
              AND checkpoint.status IN ('candidate', 'verified')
          ) DESC, editions.preferred DESC, game_files.relative_path
@@ -507,7 +513,8 @@ export class CatalogRepository {
         $game: gameId,
         $player: playerKey,
         $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
+        $snesCore: "snes9x",
         $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as PlaybackSourceRow | undefined;
     return row ? { relativePath: row.relative_path, editionId: row.edition_id, contentHash: row.content_hash } : null;
@@ -691,7 +698,7 @@ export class CatalogRepository {
   getArtworkSource(gameId: string): string | null {
     const row = this.database
       .prepare(
-        `SELECT games.display_name, MIN(game_files.relative_path) AS relative_path,
+        `SELECT games.display_name, editions.platform_key, MIN(game_files.relative_path) AS relative_path,
            metadata_corrections.cover_url, metadata_matches.cover_url AS matched_cover_url
          FROM games
          JOIN editions ON editions.game_id = games.id AND editions.active = 1
@@ -701,9 +708,9 @@ export class CatalogRepository {
          WHERE games.id = ? AND games.active = 1
          GROUP BY games.id`,
       )
-      .get(gameId) as unknown as { display_name: string; relative_path: string; cover_url: string | null; matched_cover_url: string | null } | undefined;
+      .get(gameId) as unknown as { display_name: string; platform_key: PlatformKey; relative_path: string; cover_url: string | null; matched_cover_url: string | null } | undefined;
     if (!row) return null;
-    return row.cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl;
+    return row.cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path, row.platform_key).coverUrl;
   }
 }
 
@@ -715,9 +722,13 @@ function gameIdentityKey(displayName: string): string {
   return displayName.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
+function platformForRelativePath(relativePath: string): "nes" | "snes" {
+  return [".sfc", ".smc", ".snes"].includes(path.extname(relativePath).toLocaleLowerCase("en-US")) ? "snes" : "nes";
+}
+
 function toGameSummary(row: GameRow): GameSummary {
-  const gameMetadata = metadataForGame(row.display_name, row.relative_path);
-  const curated = hasCuratedMetadata(row.display_name);
+  const gameMetadata = metadataForGame(row.display_name, row.relative_path, row.platform_key);
+  const curated = hasCuratedMetadata(row.display_name, row.platform_key);
   const correctedGenres = parseGenres(row.corrected_genres_json);
   const matchedGenres = parseGenres(row.matched_genres_json);
   return {

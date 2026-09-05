@@ -14,4 +14,7 @@ docs
 README.md
 CONTEXT.md
 sample-library/**/*.nes
+sample-library/**/*.sfc
+sample-library/**/*.smc
+sample-library/**/*.snes
 sample-library/**/*.zip

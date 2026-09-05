@@ -4,14 +4,15 @@
 > limitations below before exposing it beyond the LAN.
 
 This is a working TypeScript/React/Node/SQLite slice of the attached product
-specification. It scans one read-only NES Library Source, builds a controller-friendly
-Nintendo Entertainment System Shelf, resolves a preferred Edition internally, and
-launches it in a pinned, self-hosted EmulatorJS player. No metadata account or player
-emulator choice is required.
+specification. It scans one read-only mixed NES/SNES Library Source, builds a
+controller-friendly game catalog, resolves a preferred Edition internally, and launches
+it in a pinned, self-hosted EmulatorJS player. No metadata account or player emulator
+choice is required.
 
 ## What works
 
-- Recursive, read-only discovery of `.nes` files, with content hashes and filename-based titles.
+- Recursive, read-only discovery of NES `.nes` and SNES `.sfc`, `.smc`, and `.snes`
+  files, with content hashes, platform identity, and filename-based titles.
   Differently hashed files with the same normalized title are retained as Editions of one Game
   rather than rendered as duplicate Shelf entries.
 - A persistent **Settings → Library** location with server-side directory/readability
@@ -42,11 +43,13 @@ emulator choice is required.
   administrator corrections that survive rescans and a persistent same-origin artwork cache.
 - An **Administration** area that keeps Metadata Management intact and displays
   platform-level Emulator Profiles for NES, SNES, and Atari 2600.
-- One-click detail-to-play flow. The Playback Resolver silently selects FCEUmm for NES.
+- One-click detail-to-play flow. The Playback Resolver silently selects FCEUmm for NES
+  and Snes9x for SNES.
 - Per-profile Keyboard, Joy-Con, Pro Controller, and Apple TV Remote presets. The friendly
   choice is resolved into EmulatorJS controls by the Playback Adapter on the next launch.
-- Adaptive threaded FCEUmm playback when the browser exposes `SharedArrayBuffer`, with
-  a compatible single-thread fallback when cross-origin isolation is unavailable.
+- Adaptive threaded FCEUmm and Snes9x playback when the browser exposes
+  `SharedArrayBuffer`, with compatible single-thread fallbacks when cross-origin
+  isolation is unavailable.
 - Two-minute, random launch URLs that reveal neither the Library Source nor relative file path.
 - EmulatorJS browser persistence through its native **Save State** control plus an
   immutable server Checkpoint generation when the player chooses **Leave player**.
@@ -68,7 +71,8 @@ npm ci
 npm run dev
 ```
 
-Set `ROM_LIBRARY_PATH` in `.env` to the initial local NES library. Use a path that is
+Set `ROM_LIBRARY_PATH` in `.env` to the local game library root. NES and SNES files may
+be mixed or kept in sibling folders such as `NES/` and `SNES/`. Use a path that is
 readable by the account running Node, for example:
 
 ```dotenv
@@ -177,10 +181,10 @@ only the chosen host port. Do not map ROMs into a writable application directory
 
 ## Player flow
 
-1. Add a legally obtained `.nes` file to the mounted Library Source.
+1. Add a legally obtained `.nes`, `.sfc`, `.smc`, or `.snes` file to the mounted Library Source.
 2. Select the Household administrator profile, open **Settings → Library**, and press
    **Rescan library**.
-3. Open the game on the NES Shelf, then press **Play**.
+3. Open the game in the catalog, then press **Play**.
 4. Play with the keyboard or connected controller; no emulator selection appears.
 5. Choose **Leave player** to capture a new immutable Checkpoint generation in `/saves`
    before navigating back to the Game detail view. EmulatorJS’s **Save State** control
@@ -207,9 +211,10 @@ before the catalog renders again.
 
 The portal never writes to, renames, deletes, or sends a source game to an external
 service. The browser downloads game bytes from this portal because emulation runs in
-the browser. For enrichment, the server downloads the public Retronian NES catalog to
-`DATA_DIR/metadata` and performs hash comparisons locally; ROM bytes, filenames, and
-hashes are not uploaded to Retronian, EmulatorJS, or another metadata provider.
+the browser. For NES enrichment, the server downloads the public Retronian catalog to
+`DATA_DIR/metadata` and performs hash comparisons locally; SNES games use filename
+metadata until corrected by an administrator. ROM bytes, filenames, and hashes are not
+uploaded to Retronian, EmulatorJS, or another metadata provider.
 
 ## Verification
 
@@ -230,16 +235,15 @@ The suite also covers Collection materialization and persistence, Collection-bac
 resolution, default row seeding without title-specific shelves, row ordering validation,
 and Featured-title selection.
 
-For a real playback check, follow the player flow with a legal `.nes` file and confirm
-that the game produces video/input, a saved state survives a browser restart, and a
-new file appears after rescan. No ROM is checked into this repository.
+For a real playback check, follow the player flow with legal NES and SNES files and
+confirm that both produce video/input, each saved state survives a browser restart, and
+new files appear after rescan. No ROM is checked into this repository.
 
 ## Assumptions and known limitations
 
 - One configured Library Source and one preferred Edition per Game remain intentional
-  current limits. NES playback is enabled; SNES and Atari 2600 Emulator Profiles are
-  visible but deliberately disabled until their scanners, adapters, and save behavior
-  are implemented and verified.
+  current limits. Browser playback is enabled for NES and SNES; Atari 2600 remains
+  disabled.
 - Player Profiles are household-local and not authenticated. Selecting the Household
   administrator profile grants Metadata Match controls, so this build must remain on a
   trusted LAN until profile PINs or another authorization layer exists.
@@ -305,7 +309,7 @@ new file appears after rescan. No ROM is checked into this repository.
   eventually need incremental/background job controls.
 - The built-in Node 22 `node:sqlite` API is used to keep the container small. It emits
   an experimental warning on Node 22 but stores a standard SQLite database.
-- The pinned FCEUmm release files are repackaged from the upstream 7z archive into an
+- The pinned FCEUmm and Snes9x release files are repackaged from their upstream 7z archives into
   otherwise identical ZIP. Both compatible and threaded JavaScript/WASM runtimes are
   resolved directly by the adapter because the tested browser's archive worker dropped
   the WASM payload. This is an adapter-local compatibility measure; checksums and the
@@ -322,8 +326,8 @@ new file appears after rescan. No ROM is checked into this repository.
 `Platform` identifies the system and an emulation capability; it does not name a core.
 An `EmulatorProfile` stores the automatic playback policy once per Platform and may
 contain client-specific runtime configuration. The current web configuration resolves
-NES to EmulatorJS/FCEUmm, and the browser Playback Adapter translates that resolved fact
-into EmulatorJS globals.
+NES to EmulatorJS/FCEUmm and SNES to EmulatorJS/Snes9x; the browser Playback Adapter
+translates either resolved fact into EmulatorJS globals.
 
 The server launch manifest carries Platform identity and Emulator Profile policy
 separately from its web-only runtime fields. A future native Apple TV client can use the

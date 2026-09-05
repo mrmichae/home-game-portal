@@ -14,9 +14,9 @@ interface ControllerChoice {
 }
 
 const controllerChoices: ControllerChoice[] = [
-  { key: "keyboard", name: "Keyboard", description: "Best when playing on a computer.", mapping: "Arrow keys · Z = A · X = B · Enter = Start" },
-  { key: "joy-con", name: "Joy-Con", description: "For paired or browser-recognized Switch controllers.", mapping: "D-pad · A/B buttons · + = Start · − = Select" },
-  { key: "switch-pro", name: "Pro Controller", description: "For a Nintendo Switch Pro-style controller.", mapping: "D-pad · A/B buttons · + = Start · − = Select" },
+  { key: "keyboard", name: "Keyboard", description: "Best when playing on a computer.", mapping: "Arrows · Z/X = A/B · A/S = Y/X · Q/W = L/R" },
+  { key: "joy-con", name: "Joy-Con", description: "For paired or browser-recognized Switch controllers.", mapping: "D-pad · face buttons · shoulder buttons · +/−" },
+  { key: "switch-pro", name: "Pro Controller", description: "For a Nintendo Switch Pro-style controller.", mapping: "D-pad · face buttons · shoulder buttons · +/−" },
   { key: "apple-tv-remote", name: "Apple TV Remote", description: "For keyboard-like remote input in a compatible WebView.", mapping: "Directional pad · Click = A · Play/Pause = Start" },
 ];
 
@@ -136,7 +136,7 @@ export function SettingsPage(): React.JSX.Element {
               <button className="stream-button primary" type="submit" disabled={savingLibrary || rescanning} data-controller-target>{savingLibrary ? "Saving…" : "Save location"}</button>
             </form>
             <div className={`library-health ${administration.library.available ? "available" : "unavailable"}`}><span aria-hidden="true">{administration.library.available ? "✓" : "!"}</span><div><strong>{administration.library.available ? "Library available" : "Library unavailable"}</strong><p>{administration.library.statusMessage}</p></div></div>
-            <div className="library-scan-row"><div><h3>Catalog scan</h3><p>Reads `.nes` files beneath this directory and updates the Catalog. Source Game Files are never renamed, modified, or deleted.</p><small>{administration.library.lastScannedAt ? `Last scanned ${formatSettingsDate(administration.library.lastScannedAt)}` : "Not scanned yet"}</small></div><button className="stream-button secondary" type="button" onClick={() => void rescanLibrary()} disabled={rescanning || savingLibrary || !administration.library.available} data-controller-target>{rescanning ? "Scanning…" : "↻ Rescan library"}</button></div>
+            <div className="library-scan-row"><div><h3>Catalog scan</h3><p>Reads `.nes`, `.sfc`, `.smc`, and `.snes` files beneath this directory and updates the Catalog. Source Game Files are never renamed, modified, or deleted.</p><small>{administration.library.lastScannedAt ? `Last scanned ${formatSettingsDate(administration.library.lastScannedAt)}` : "Not scanned yet"}</small></div><button className="stream-button secondary" type="button" onClick={() => void rescanLibrary()} disabled={rescanning || savingLibrary || !administration.library.available} data-controller-target>{rescanning ? "Scanning…" : "↻ Rescan library"}</button></div>
           </> : <p className="settings-loading">Loading Library configuration…</p>}
           <p className={`administration-message ${administrationStatusKind}`} role="status" aria-live="polite">{administrationStatus}</p>
         </section>
@@ -163,6 +163,7 @@ function EmulatorProfileCard({ profile }: { profile: EmulatorProfile }): React.J
 function displayRuntimeName(value: string): string {
   if (value === "emulatorjs") return "EmulatorJS";
   if (value === "fceumm") return "FCEUmm";
+  if (value === "snes9x") return "Snes9x";
   return value;
 }
 
