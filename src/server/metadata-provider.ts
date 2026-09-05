@@ -34,6 +34,11 @@ export class RetronianMetadataProvider {
   ) {}
 
   async match(files: DiscoveredGameFile[]): Promise<MetadataMatch[]> {
+    // This provider is the Famicom/NES catalog. SNES titles retain filename
+    // metadata (or administrator corrections) until a platform-specific
+    // provider is introduced; they must never receive a same-named NES match.
+    const nesFiles = files.filter((file) => file.platform !== "snes");
+    if (!nesFiles.length) return [];
     const entries = await this.loadCatalog();
     const byHash = new Map<string, { entry: RetronianEntry; region?: string }>();
     const byTitle = new Map<string, { entry: RetronianEntry; region?: string } | null>();
@@ -46,7 +51,7 @@ export class RetronianMetadataProvider {
         if (title.lang === "en") addUnambiguousTitle(byTitle, metadataTitleKey(title.text), { entry, region: title.region });
       }
     }
-    return files.flatMap((file) => {
+    return nesFiles.flatMap((file) => {
       const found = byHash.get(file.contentHash.toLocaleLowerCase("en-US"))
         ?? byTitle.get(metadataTitleKey(file.displayName));
       return found ? [toMetadataMatch(file.contentHash, found.entry, found.region, file.displayName)] : [];

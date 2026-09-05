@@ -8,6 +8,9 @@ describe("filename normalization", () => {
     ["MEGA MAN III (USA).nes", "Mega Man III"],
     ["R.B.I. Baseball.nes", "R B I Baseball"],
     ["Kirby's Adventure (Europe) (En,Fr,De,Es,It).nes", "Kirby's Adventure"],
+    ["chrono_trigger_(USA).sfc", "Chrono Trigger"],
+    ["Super Metroid (USA).smc", "Super Metroid"],
+    ["F-Zero.snes", "F Zero"],
   ])("derives %s as %s", (filename, expected) => {
     expect(normalizeGameFilename(filename)).toBe(expected);
   });

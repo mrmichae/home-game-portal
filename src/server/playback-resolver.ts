@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
-import { WEB_CHECKPOINT_COMPATIBILITY, type LaunchManifest } from "../domain/types.js";
+import { webCheckpointCompatibility, type LaunchManifest, type PlatformKey, type WebCoreKey } from "../domain/types.js";
 import type { CatalogRepository } from "./catalog-repository.js";
 import type { CheckpointContext, VersionedCheckpointStore } from "./checkpoint-store.js";
 import { assertRealPathWithinRoot, resolveLibraryPath } from "./path-security.js";
@@ -33,7 +33,7 @@ export class PlaybackResolver {
       realpathSync(this.catalog.getLibraryRoot()),
       realpathSync(absolutePath),
     );
-    assertNesCartridge(absolutePath);
+    assertPlayableGameFile(absolutePath, game.platform);
 
     this.prune(now);
     const controllerPreset = this.catalog.getPlayerProfile(playerKey)?.controllerPreset ?? "keyboard";
@@ -41,7 +41,8 @@ export class PlaybackResolver {
     if (!emulatorProfile?.enabled || !emulatorProfile.webPlayback) {
       throw new Error(`Web playback is not configured for ${game.platformName}.`);
     }
-    if (emulatorProfile.webPlayback.adapterKey !== "emulatorjs" || emulatorProfile.webPlayback.coreKey !== "fceumm") {
+    if (emulatorProfile.webPlayback.adapterKey !== "emulatorjs"
+      || !isSupportedWebCore(game.platform, emulatorProfile.webPlayback.coreKey)) {
       throw new Error(`The configured web playback adapter is not available for ${game.platformName}.`);
     }
     const checkpointContext = this.checkpointContext(game.id, source, playerKey);
@@ -123,9 +124,26 @@ export class PlaybackResolver {
       editionId: source.editionId,
       playerKey,
       romContentHash: source.contentHash,
-      compatibility: WEB_CHECKPOINT_COMPATIBILITY,
+      compatibility: webCheckpointCompatibility(this.webCoreForGame(gameId)),
     };
   }
+
+  private webCoreForGame(gameId: string): WebCoreKey {
+    const game = this.catalog.getGame(gameId);
+    const coreKey = game && this.catalog.getEmulatorProfile(game.platform)?.webPlayback?.coreKey;
+    if (coreKey === "fceumm" || coreKey === "snes9x") return coreKey;
+    throw new Error("The configured web playback adapter is unavailable.");
+  }
+}
+
+function isSupportedWebCore(platform: PlatformKey, coreKey: string): coreKey is WebCoreKey {
+  return (platform === "nes" && coreKey === "fceumm") || (platform === "snes" && coreKey === "snes9x");
+}
+
+function assertPlayableGameFile(absolutePath: string, platform: PlatformKey): void {
+  if (platform === "nes") return assertNesCartridge(absolutePath);
+  if (platform === "snes") return assertSnesCartridge(absolutePath);
+  throw new Error("The selected game platform is not supported in the browser.");
 }
 
 function assertNesCartridge(absolutePath: string): void {
@@ -139,4 +157,36 @@ function assertNesCartridge(absolutePath: string): void {
   } finally {
     closeSync(descriptor);
   }
+}
+
+function assertSnesCartridge(absolutePath: string): void {
+  const size = statSync(absolutePath).size;
+  const copierHeaderSize = size % 0x8000 === 512 ? 512 : 0;
+  const descriptor = openSync(absolutePath, "r");
+  try {
+    const plausible = [0x7fc0, 0xffc0, 0x40ffc0].some((baseOffset) => {
+      const header = Buffer.alloc(64);
+      const offset = copierHeaderSize + baseOffset;
+      if (offset + header.byteLength > size || readSync(descriptor, header, 0, header.byteLength, offset) !== header.byteLength) return false;
+      return snesHeaderScore(header) >= 4;
+    });
+    if (!plausible) {
+      throw new Error("The selected file is not a valid Super Nintendo game. Rescan the Library Source and try again.");
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function snesHeaderScore(header: Buffer): number {
+  let score = 0;
+  const mapMode = header[0x15] & 0x3f;
+  if ([0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35].includes(mapMode)) score += 2;
+  const complement = header.readUInt16LE(0x1c);
+  const checksum = header.readUInt16LE(0x1e);
+  if ((complement ^ checksum) === 0xffff && (complement !== 0 || checksum !== 0)) score += 2;
+  if (header.readUInt16LE(0x3c) >= 0x8000) score += 2;
+  if (header.subarray(0, 21).filter((byte) => byte === 0 || byte === 0x20 || (byte >= 0x21 && byte <= 0x7e)).length >= 18) score += 1;
+  if (header[0x17] >= 0x08 && header[0x17] <= 0x0f) score += 1;
+  return score;
 }

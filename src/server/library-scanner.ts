@@ -2,11 +2,18 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { DiscoveredGameFile } from "../domain/types.js";
+import type { DiscoveredGameFile, WebPlayablePlatformKey } from "../domain/types.js";
 import { normalizeGameFilename } from "./filename-normalizer.js";
 import { assertRealPathWithinRoot, resolveLibraryPath } from "./path-security.js";
 
-export async function scanNesLibrary(libraryRoot: string): Promise<DiscoveredGameFile[]> {
+const ROM_PLATFORMS: Readonly<Record<string, WebPlayablePlatformKey>> = {
+  ".nes": "nes",
+  ".sfc": "snes",
+  ".smc": "snes",
+  ".snes": "snes",
+};
+
+export async function scanGameLibrary(libraryRoot: string): Promise<DiscoveredGameFile[]> {
   const rootRealPath = await realpath(libraryRoot);
   const discovered: DiscoveredGameFile[] = [];
   await visitDirectory(rootRealPath, "", discovered);
@@ -25,7 +32,7 @@ async function visitDirectory(
 
   for (const entry of entries) {
     // Finder and archive tools can leave AppleDouble resource forks beside ROMs.
-    // They may end in .nes, but they are filesystem metadata rather than games.
+    // They may use a supported ROM extension, but they are filesystem metadata rather than games.
     if (entry.name.startsWith("._") || entry.name === "__MACOSX") continue;
     const relativePath = path.posix.join(
       relativeDirectory.split(path.sep).join(path.posix.sep),
@@ -40,20 +47,23 @@ async function visitDirectory(
       await visitDirectory(root, relativePath, discovered);
       continue;
     }
-    if (!stats.isFile() || path.extname(entry.name).toLocaleLowerCase("en-US") !== ".nes") {
-      continue;
-    }
+    const platform = ROM_PLATFORMS[path.extname(entry.name).toLocaleLowerCase("en-US")];
+    if (!stats.isFile() || !platform) continue;
 
     assertRealPathWithinRoot(root, await realpath(absolutePath));
     discovered.push({
       relativePath,
       displayName: normalizeGameFilename(entry.name),
+      platform,
       contentHash: await sha256File(absolutePath),
       byteSize: stats.size,
       modifiedAtMs: Math.trunc(stats.mtimeMs),
     });
   }
 }
+
+/** @deprecated Use scanGameLibrary for the mixed NES/SNES Library Source. */
+export const scanNesLibrary = scanGameLibrary;
 
 async function sha256File(filename: string): Promise<string> {
   const hash = createHash("sha256");

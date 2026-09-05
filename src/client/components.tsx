@@ -48,10 +48,10 @@ export function GameArtwork({ game, large = false }: { game: GameSummary; large?
     .join("")
     .toLocaleUpperCase("en-US");
   return (
-    <div className={`game-artwork${large ? " game-artwork-large" : ""}`} style={{ "--game-hue": hue } as React.CSSProperties}>
+    <div className={`game-artwork${large ? " game-artwork-large" : ""}`} data-platform={game.platform} style={{ "--game-hue": hue } as React.CSSProperties}>
       <div className="cartridge-ridges" aria-hidden="true" />
       <div className="cartridge-label">
-        <span className="cartridge-system">Entertainment System</span>
+        <span className="cartridge-system">{game.platform === "snes" ? "Super Nintendo" : "Entertainment System"}</span>
         <strong aria-hidden="true">{initials}</strong>
         <span>{game.displayName}</span>
       </div>

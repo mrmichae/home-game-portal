@@ -4,7 +4,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import type { AppConfig } from "./config.js";
 import { CatalogRepository, DEFAULT_PLAYER_KEY, type ScanCommitResult } from "./catalog-repository.js";
 import { openDatabase, type PortalDatabase } from "./database.js";
-import { scanNesLibrary } from "./library-scanner.js";
+import { scanGameLibrary } from "./library-scanner.js";
 import { PlaybackResolver } from "./playback-resolver.js";
 import { VersionedCheckpointStore } from "./checkpoint-store.js";
 import { ArtworkStore } from "./artwork-store.js";
@@ -45,7 +45,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     if (activeScan) return activeScan;
     scanState = { ...scanState, status: "scanning", message: null };
     const libraryRoot = catalog.getLibraryRoot();
-    activeScan = scanNesLibrary(libraryRoot)
+    activeScan = scanGameLibrary(libraryRoot)
       .then(async (files) => {
         const matches = await metadataProvider.match(files).catch((error: unknown) => {
           console.warn("[Home Game Portal] Metadata enrichment skipped; the library scan will continue.", error);
@@ -165,8 +165,8 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     const games = catalog.listGames(playerKeyFor(request));
     response.json({
       shelf: {
-        id: "nintendo-entertainment-system",
-        title: "Nintendo Entertainment System",
+        id: "game-library",
+        title: "Game Library",
         games,
       },
       scan: scanState,
@@ -350,7 +350,9 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     }
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Content-Type", "application/octet-stream");
-    response.setHeader("Content-Disposition", 'inline; filename="game.nes"');
+    const extension = path.extname(absolutePath).toLocaleLowerCase("en-US");
+    const safeExtension = [".nes", ".sfc", ".smc", ".snes"].includes(extension) ? extension : ".rom";
+    response.setHeader("Content-Disposition", `inline; filename="game${safeExtension}"`);
     return response.sendFile(absolutePath);
   });
 

@@ -19,7 +19,7 @@ describe("automatic Metadata Match enrichment", () => {
     const database = openMemoryDatabase(path.resolve(process.cwd(), "migrations"));
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
-    const file: DiscoveredGameFile = { relativePath: "Castlevania (USA).nes", displayName: "Castlevania", contentHash: "abc123", byteSize: 1, modifiedAtMs: 1 };
+    const file: DiscoveredGameFile = { relativePath: "Castlevania (USA).nes", displayName: "Castlevania", platform: "nes", contentHash: "abc123", byteSize: 1, modifiedAtMs: 1 };
     const match = {
       contentHash: "abc123", canonicalId: "castlevania", displayName: "Castlevania", releaseYear: 1986,
       description: "A matched description.", genres: ["Action", "Adventure"], series: "Castlevania",
@@ -46,6 +46,7 @@ describe("automatic Metadata Match enrichment", () => {
     const file: DiscoveredGameFile = {
       relativePath: "Castlevania (USA).nes",
       displayName: "Castlevania",
+      platform: "nes",
       contentHash: "abc123",
       byteSize: 1,
       modifiedAtMs: 1,
@@ -85,6 +86,7 @@ describe("automatic Metadata Match enrichment", () => {
     const file: DiscoveredGameFile = {
       relativePath: "Castlevania (USA) [Rev A].nes",
       displayName: "Castlevania",
+      platform: "nes",
       contentHash: "different-local-dump",
       byteSize: 1,
       modifiedAtMs: 1,
@@ -93,6 +95,21 @@ describe("automatic Metadata Match enrichment", () => {
     await expect(provider.match([file])).resolves.toEqual([
       expect.objectContaining({ canonicalId: "castlevania", contentHash: "different-local-dump" }),
     ]);
+  });
+
+  it("does not apply the NES catalog to a same-named SNES title", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify([fixtureMetadata()]))) as typeof fetch;
+    const provider = new RetronianMetadataProvider(path.join(os.tmpdir(), "unused-snes-metadata"), fetcher);
+
+    await expect(provider.match([{
+      relativePath: "SNES/Castlevania.sfc",
+      displayName: "Castlevania",
+      platform: "snes",
+      contentHash: "abc123",
+      byteSize: 1,
+      modifiedAtMs: 1,
+    }])).resolves.toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

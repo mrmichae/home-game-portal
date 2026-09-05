@@ -71,10 +71,55 @@ describe("Playback Resolver", () => {
     expect(() => resolver.resolve(catalog.listGames()[0].id)).toThrow("valid NES game");
     database.close();
   });
+
+  it("selects Snes9x and an isolated checkpoint format for an SNES game", async () => {
+    const libraryRoot = await temporaryDirectory("portal-snes-launch-");
+    await writeFile(path.join(libraryRoot, "Chrono Trigger.sfc"), snesBytes());
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource(libraryRoot);
+    catalog.commitScan(await scanNesLibrary(libraryRoot));
+    const game = catalog.listGames()[0];
+    const checkpointStore = new VersionedCheckpointStore(path.join(libraryRoot, "saves"), database);
+    const resolver = new PlaybackResolver(catalog, checkpointStore);
+
+    const manifest = resolver.resolve(game.id);
+    const context = resolver.resolveCheckpointSession(manifest.sessionId, game.id, "household");
+
+    expect(game).toMatchObject({ platform: "snes", platformName: "Super Nintendo Entertainment System" });
+    expect(manifest.playbackProfile).toEqual({ adapter: "emulatorjs", core: "snes9x" });
+    expect(manifest.emulatorProfile).toEqual({ platformKey: "snes", policy: "platform-default" });
+    expect(context?.compatibility).toMatchObject({ adapterKey: "emulatorjs", coreKey: "snes9x" });
+    database.close();
+  });
+
+  it("rejects a file without a plausible Super Nintendo cartridge header", async () => {
+    const libraryRoot = await temporaryDirectory("portal-invalid-snes-launch-");
+    await writeFile(path.join(libraryRoot, "not_a_game.smc"), Buffer.alloc(0x8000));
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource(libraryRoot);
+    catalog.commitScan(await scanNesLibrary(libraryRoot));
+    const resolver = new PlaybackResolver(catalog, new VersionedCheckpointStore(path.join(libraryRoot, "saves"), database));
+
+    expect(() => resolver.resolve(catalog.listGames()[0].id)).toThrow("valid Super Nintendo game");
+    database.close();
+  });
 });
 
 function nesBytes(): Buffer {
   return Buffer.concat([Buffer.from([0x4e, 0x45, 0x53, 0x1a]), Buffer.alloc(16_380)]);
+}
+
+function snesBytes(): Buffer {
+  const bytes = Buffer.alloc(0x8000, 0xff);
+  bytes.write("TEST SNES GAME", 0x7fc0, "ascii");
+  bytes[0x7fd5] = 0x20;
+  bytes[0x7fd7] = 0x09;
+  bytes.writeUInt16LE(0x1234, 0x7fdc);
+  bytes.writeUInt16LE(0xedcb, 0x7fde);
+  bytes.writeUInt16LE(0x8000, 0x7ffc);
+  return bytes;
 }
 
 async function temporaryDirectory(prefix: string): Promise<string> {

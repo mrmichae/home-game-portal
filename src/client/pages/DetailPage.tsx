@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GameDetail } from "../../domain/types";
+import { platformShortName } from "../../domain/platforms";
 import { api } from "../api";
 import { Brand, CoverArt, Spinner } from "../components";
 import { continuePlayingRemovalLabel } from "../continue-playing";
@@ -74,9 +75,9 @@ export function DetailPage(): React.JSX.Element {
         <div className="detail-backdrop"><CoverArt game={game} eager /></div>
         <div className="detail-poster"><CoverArt game={game} eager /></div>
         <div className="detail-information">
-          <p className="stream-kicker">Nintendo Entertainment System</p>
+          <p className="stream-kicker">{game.platformName}</p>
           <h1>{game.displayName}</h1>
-          <div className="metadata-line"><span>{game.releaseYear}</span><span>NES</span><span>{game.genres.join(" · ")}</span></div>
+          <div className="metadata-line"><span>{game.releaseYear}</span><span>{platformShortName(game.platform)}</span><span>{game.genres.join(" · ")}</span></div>
           <p className="game-description">{game.description}</p>
           <div className="detail-actions">
             <button className="stream-button primary detail-play" onClick={play} disabled={launching} autoFocus data-controller-target>▶ {launching ? "Loading…" : game.hasServerSave ? "Continue Playing" : "Play"}</button>
@@ -85,7 +86,7 @@ export function DetailPage(): React.JSX.Element {
             {activeProfile?.isAdministrator && <Link className="stream-button secondary" to={`/admin/metadata?game=${game.id}`} data-controller-target>Edit metadata</Link>}
           </div>
           {actionMessage && <p className="detail-action-message" role="status">{actionMessage}</p>}
-          <dl className="detail-facts"><div><dt>Platform</dt><dd>Nintendo Entertainment System</dd></div><div><dt>Released</dt><dd>{game.releaseYear}</dd></div><div><dt>Progress</dt><dd>{game.hasServerSave ? "Save ready to resume" : "New game"}</dd></div>{game.series && <div><dt>Series</dt><dd>{game.series}</dd></div>}</dl>
+          <dl className="detail-facts"><div><dt>Platform</dt><dd>{game.platformName}</dd></div><div><dt>Released</dt><dd>{game.releaseYear}</dd></div><div><dt>Progress</dt><dd>{game.hasServerSave ? "Save ready to resume" : "New game"}</dd></div>{game.series && <div><dt>Series</dt><dd>{game.series}</dd></div>}</dl>
           <p className="privacy-note"><span>●</span> Runs privately in this browser. The library source remains read-only.</p>
         </div>
       </section>

@@ -26,6 +26,15 @@ describe("FCEUmm runtime asset resolution", () => {
     const wasm = await readFile(path.resolve("public/emulatorjs/cores/fceumm_libretro.wasm"));
     expect([...wasm.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
   });
+
+  it("ships the pinned Snes9x WebAssembly modules", async () => {
+    const [singleThreaded, threaded] = await Promise.all([
+      readFile(path.resolve("public/emulatorjs/cores/snes9x_libretro.wasm")),
+      readFile(path.resolve("public/emulatorjs/cores/snes9x_thread_libretro.wasm")),
+    ]);
+    expect([...singleThreaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    expect([...threaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+  });
 });
 
 describe("server Game File preparation", () => {
@@ -33,17 +42,29 @@ describe("server Game File preparation", () => {
     const bytes = new Uint8Array([0x4e, 0x45, 0x53, 0x1a, ...new Array(12).fill(0), 1, 2, 3]);
     const fetcher = vi.fn(async () => new Response(bytes));
 
-    const file = await fetchGameFile("/api/playback/files/session", new AbortController().signal, fetcher);
+    const file = await fetchGameFile("/api/playback/files/session", new AbortController().signal, "nes", fetcher);
 
     expect(fetcher).toHaveBeenCalledWith("/api/playback/files/session", expect.objectContaining({ cache: "no-store" }));
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
   });
 
   it("turns an unavailable or invalid launch response into a useful player error", async () => {
-    await expect(fetchGameFile("/missing", new AbortController().signal, async () => new Response(null, { status: 404 })))
+    await expect(fetchGameFile("/missing", new AbortController().signal, "nes", async () => new Response(null, { status: 404 })))
       .rejects.toThrow("could not be read from the server");
-    await expect(fetchGameFile("/invalid", new AbortController().signal, async () => new Response(new Uint8Array([1, 2, 3]))))
+    await expect(fetchGameFile("/invalid", new AbortController().signal, "nes", async () => new Response(new Uint8Array([1, 2, 3]))))
       .rejects.toThrow("valid NES game");
+  });
+
+  it("accepts a plausible Super Nintendo cartridge image", async () => {
+    const bytes = snesBytes();
+    const file = await fetchGameFile(
+      "/api/playback/files/snes-session",
+      new AbortController().signal,
+      "snes",
+      async () => new Response(bytes.slice().buffer as ArrayBuffer),
+    );
+
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
   });
 });
 
@@ -67,6 +88,22 @@ describe("controller preset translation", () => {
       8: { value2: "BUTTON_1" },
     });
     expect(controllerMappingFor("joy-con")).toEqual(controllerMappingFor("switch-pro"));
+  });
+
+  it("adds the extra SNES face and shoulder buttons without changing NES mappings", () => {
+    expect(controllerMappingFor("keyboard", "snes")[0]).toMatchObject({
+      1: { value: "a" },
+      9: { value: "s" },
+      10: { value: "q" },
+      11: { value: "w" },
+    });
+    expect(controllerMappingFor("switch-pro", "snes")[0]).toMatchObject({
+      1: { value2: "BUTTON_4" },
+      9: { value2: "BUTTON_3" },
+      10: { value2: "LEFT_TOP_SHOULDER" },
+      11: { value2: "RIGHT_TOP_SHOULDER" },
+    });
+    expect(controllerMappingFor("keyboard", "nes")[0][11]).toBeUndefined();
   });
 
   it("uses only keyboard-like events for the Apple TV Remote compatibility preset", () => {
@@ -168,7 +205,6 @@ describe("runtime selection", () => {
       scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
     });
   });
-
   it("avoids the threaded WebAssembly runtime in Safari on macOS and iOS", () => {
     const macSafari = {
       crossOriginIsolated: true,
@@ -210,4 +246,33 @@ describe("runtime selection", () => {
       scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
     });
   });
+
+  it("selects the matching Snes9x runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/snes9x_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/snes9x_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_libretro.wasm",
+    });
+  });
 });
+
+function snesBytes(): Uint8Array {
+  const bytes = new Uint8Array(0x8000);
+  bytes.fill(0xff);
+  const title = new TextEncoder().encode("TEST SNES GAME       ");
+  bytes.set(title.subarray(0, 21), 0x7fc0);
+  bytes[0x7fd5] = 0x20;
+  bytes[0x7fd7] = 0x09;
+  bytes[0x7fdc] = 0x34;
+  bytes[0x7fdd] = 0x12;
+  bytes[0x7fde] = 0xcb;
+  bytes[0x7fdf] = 0xed;
+  bytes[0x7ffc] = 0x00;
+  bytes[0x7ffd] = 0x80;
+  return bytes;
+}

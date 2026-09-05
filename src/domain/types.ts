@@ -1,4 +1,6 @@
 export type PlatformKey = "nes" | "snes" | "atari2600";
+export type WebPlayablePlatformKey = "nes" | "snes";
+export type WebCoreKey = "fceumm" | "snes9x";
 export type ControllerPresetKey = "keyboard" | "joy-con" | "switch-pro" | "apple-tv-remote";
 
 import type { ProfileAvatarKey } from "./profile-avatars.js";
@@ -17,6 +19,7 @@ export interface PlayerProfile {
 export interface DiscoveredGameFile {
   relativePath: string;
   displayName: string;
+  platform: WebPlayablePlatformKey;
   contentHash: string;
   byteSize: number;
   modifiedAtMs: number;
@@ -165,7 +168,7 @@ export interface LaunchManifest {
   runtime: "emulatorjs";
   playbackProfile: {
     adapter: "emulatorjs";
-    core: "fceumm";
+    core: WebCoreKey;
   };
   gameUrl: string;
   resumePlan: ResumePlan;
@@ -181,6 +184,16 @@ export const WEB_CHECKPOINT_COMPATIBILITY = {
   // for rollback/inspection, but never advertise them to the corrected player.
   runtimeVersion: "4.2.3-portal.3",
 } as const;
+
+export const SNES_WEB_CHECKPOINT_COMPATIBILITY = {
+  adapterKey: "emulatorjs",
+  coreKey: "snes9x",
+  runtimeVersion: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+} as const;
+
+export function webCheckpointCompatibility(coreKey: WebCoreKey): CheckpointCompatibility {
+  return coreKey === "snes9x" ? SNES_WEB_CHECKPOINT_COMPATIBILITY : WEB_CHECKPOINT_COMPATIBILITY;
+}
 
 export interface CheckpointCompatibility {
   adapterKey: string;

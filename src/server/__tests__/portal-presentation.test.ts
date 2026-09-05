@@ -73,7 +73,7 @@ describe("Portal Presentation module interface", () => {
       "Continue Playing",
       "Favorites",
       "Recently Played",
-      "Nintendo Entertainment System",
+      "All Games",
       "Action & Platforming",
       "Adventures & Strategy",
       "Sports & Competition",
@@ -91,8 +91,8 @@ function seededCatalog(database: ReturnType<typeof openMemoryDatabase>): Catalog
   const catalog = new CatalogRepository(database);
   catalog.ensureLibrarySource("/roms");
   const files: DiscoveredGameFile[] = [
-    { relativePath: "Mega Man.nes", displayName: "Mega Man", contentHash: "hash-one", byteSize: 1, modifiedAtMs: 1 },
-    { relativePath: "Mega Man 3.nes", displayName: "Mega Man 3", contentHash: "hash-two", byteSize: 1, modifiedAtMs: 1 },
+    { relativePath: "Mega Man.nes", displayName: "Mega Man", platform: "nes", contentHash: "hash-one", byteSize: 1, modifiedAtMs: 1 },
+    { relativePath: "Mega Man 3.nes", displayName: "Mega Man 3", platform: "nes", contentHash: "hash-two", byteSize: 1, modifiedAtMs: 1 },
   ];
   catalog.commitScan(files, new Date("2026-08-18T09:00:00.000Z"));
   return catalog;

@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { PlatformKey } from "../domain/types.js";
 
 interface CuratedMetadata {
   releaseYear: number;
@@ -76,8 +77,8 @@ const metadata: Record<string, CuratedMetadata> = {
   "Zelda II The Adventure of Link": { releaseYear: 1988, description: "Explore Hyrule, master sword techniques, and awaken Zelda in a bold action-RPG sequel.", genres: ["Adventure", "RPG"] },
 };
 
-export function hasCuratedMetadata(displayName: string): boolean {
-  return curatedMetadataFor(displayName) !== null;
+export function hasCuratedMetadata(displayName: string, platform: PlatformKey = "nes"): boolean {
+  return platform === "nes" && curatedMetadataFor(displayName) !== null;
 }
 
 const coverAliases: Record<string, string> = {
@@ -86,19 +87,33 @@ const coverAliases: Record<string, string> = {
   "Kung Fu (PC10)": "Kung Fu (1985)(Irem)(PlayChoice-10)",
 };
 
-export function metadataForGame(displayName: string, relativePath: string): NesMetadata {
-  const curated = curatedMetadataFor(displayName) ?? {
-    releaseYear: 1985,
-    description: "A game discovered in your private Nintendo Entertainment System library.",
-    genres: ["Nintendo Entertainment System"],
-  };
+export function metadataForGame(displayName: string, relativePath: string, platform: PlatformKey = "nes"): NesMetadata {
+  const curated = platform === "nes" ? curatedMetadataFor(displayName) ?? fallbackMetadata(platform) : fallbackMetadata(platform);
   const sourceName = path.basename(relativePath, path.extname(relativePath));
   const coverName = coverAliases[sourceName] ?? sourceName.replace(/[&*/:`<>?\\|]/g, "_");
+  const thumbnailRepository = platform === "snes"
+    ? "Nintendo_-_Super_Nintendo_Entertainment_System"
+    : "Nintendo_-_Nintendo_Entertainment_System";
   return {
     ...curated,
     series: seriesForGame(displayName),
     universes: universesForGame(displayName, curated.genres),
-    coverUrl: `https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System/master/Named_Boxarts/${encodeURIComponent(coverName)}.png`,
+    coverUrl: `https://raw.githubusercontent.com/libretro-thumbnails/${thumbnailRepository}/master/Named_Boxarts/${encodeURIComponent(coverName)}.png`,
+  };
+}
+
+function fallbackMetadata(platform: PlatformKey): CuratedMetadata {
+  if (platform === "snes") {
+    return {
+      releaseYear: 1991,
+      description: "A game discovered in your private Super Nintendo Entertainment System library.",
+      genres: ["Super Nintendo Entertainment System"],
+    };
+  }
+  return {
+    releaseYear: 1985,
+    description: "A game discovered in your private Nintendo Entertainment System library.",
+    genres: ["Nintendo Entertainment System"],
   };
 }
 

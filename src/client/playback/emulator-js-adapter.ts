@@ -1,4 +1,4 @@
-import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest } from "../../domain/types";
+import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest, type PlatformKey, type WebCoreKey } from "../../domain/types";
 import { ResumeCoordinator, type RestoreResult, type ResumableGameManager } from "./resume-coordinator";
 
 type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
@@ -94,7 +94,23 @@ const standardGamepadControls: EmulatorDefaultControls[0] = {
   8: { value: "z", value2: "BUTTON_1" },
 };
 
-export function controllerMappingFor(preset: ControllerPresetKey): EmulatorDefaultControls {
+const snesKeyboardControls: EmulatorDefaultControls[0] = {
+  ...keyboardControls,
+  1: { value: "a" },
+  9: { value: "s" },
+  10: { value: "q" },
+  11: { value: "w" },
+};
+
+const snesGamepadControls: EmulatorDefaultControls[0] = {
+  ...standardGamepadControls,
+  1: { value: "a", value2: "BUTTON_4" },
+  9: { value: "s", value2: "BUTTON_3" },
+  10: { value: "q", value2: "LEFT_TOP_SHOULDER" },
+  11: { value: "w", value2: "RIGHT_TOP_SHOULDER" },
+};
+
+export function controllerMappingFor(preset: ControllerPresetKey, platform: PlatformKey = "nes"): EmulatorDefaultControls {
   if (preset === "apple-tv-remote") {
     return fourPlayerMapping({
       0: { value: "space" },
@@ -108,9 +124,9 @@ export function controllerMappingFor(preset: ControllerPresetKey): EmulatorDefau
     });
   }
   if (preset === "joy-con" || preset === "switch-pro") {
-    return fourPlayerMapping(standardGamepadControls);
+    return fourPlayerMapping(platform === "snes" ? snesGamepadControls : standardGamepadControls);
   }
-  return fourPlayerMapping(keyboardControls);
+  return fourPlayerMapping(platform === "snes" ? snesKeyboardControls : keyboardControls);
 }
 
 function fourPlayerMapping(playerOne: EmulatorDefaultControls[0]): EmulatorDefaultControls {
@@ -205,10 +221,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       vendor: window.navigator.vendor,
       platform: window.navigator.platform,
       maxTouchPoints: window.navigator.maxTouchPoints,
-    });
+    }, manifest.playbackProfile.core);
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
     const startupRequest = new AbortController();
-    const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal);
+    const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal, manifest.platform);
     let running = false;
     let failed = false;
     let disposed = false;
@@ -243,7 +259,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     // Own restoration here so a later runtime start event cannot rewind gameplay.
     host.EJS_loadStateURL = "";
     host.EJS_defaultOptions = { "save-state-location": "browser" };
-    host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset);
+    host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset, manifest.platform);
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
     host.EJS_Buttons = { netplay: false, settings: false, exitEmulation: false };
     host.EJS_ready = callbacks.onReady;
@@ -296,11 +312,11 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       }
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isBenignRuntimeRejection(event.reason)) {
+        event.preventDefault();
+        return;
+      }
       if (!running) {
-        if (isBenignRuntimeRejection(event.reason)) {
-          event.preventDefault();
-          return;
-        }
         console.error("[Home Game Portal] EmulatorJS rejected a startup task", event.reason);
         reportError(playerMessage(event.reason));
       }
@@ -319,7 +335,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     runtimeScript.onload = async () => {
       const upstreamRuntime = host.EJS_Runtime;
       if (!upstreamRuntime) {
-        reportError("The NES player could not be loaded.");
+        reportError("The game player could not be loaded.");
         return;
       }
       wrappedRuntime = (options = {}) => {
@@ -327,7 +343,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         return upstreamRuntime({
           ...options,
           locateFile: (filename: string, scriptDirectory?: string) =>
-            resolveFceummRuntimeFile(filename, scriptDirectory, upstreamLocateFile, runtimeProfile.wasmPath),
+            resolveLibretroRuntimeFile(filename, scriptDirectory, upstreamLocateFile, runtimeProfile.wasmPath),
         });
       };
       host.EJS_Runtime = wrappedRuntime;
@@ -336,7 +352,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         gameFileUrl = URL.createObjectURL(gameFile);
         // EmulatorJS derives a virtual filename from the URL. Preserve the platform
         // extension in the fragment while retaining the revocable object URL.
-        host.EJS_gameUrl = `${gameFileUrl}#game.nes`;
+        host.EJS_gameUrl = `${gameFileUrl}#game.${manifest.platform === "snes" ? "sfc" : "nes"}`;
       } catch (error) {
         if (!disposed) reportError(playerMessage(error));
         return;
@@ -344,7 +360,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       if (disposed) return;
       document.body.appendChild(loaderScript);
     };
-    runtimeScript.onerror = () => reportError("The NES player could not be loaded.");
+    runtimeScript.onerror = () => reportError("The game player could not be loaded.");
     document.body.appendChild(runtimeScript);
 
     const timeout = window.setTimeout(() => {
@@ -374,18 +390,20 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
 export async function fetchGameFile(
   gameUrl: string,
   signal: AbortSignal,
+  platform: PlatformKey = "nes",
   fetcher: typeof fetch = fetch,
 ): Promise<Blob> {
   const response = await fetcher(gameUrl, { cache: "no-store", signal });
   if (!response.ok) throw new Error("The game file could not be read from the server. Check the Library Source, then rescan and try again.");
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength < 16 || bytes[0] !== 0x4e || bytes[1] !== 0x45 || bytes[2] !== 0x53 || bytes[3] !== 0x1a) {
-    throw new Error("The selected file is not a valid NES game. The source file was not changed.");
-  }
+  const valid = platform === "snes"
+    ? isValidSnesRom(bytes)
+    : bytes.byteLength >= 16 && bytes[0] === 0x4e && bytes[1] === 0x45 && bytes[2] === 0x53 && bytes[3] === 0x1a;
+  if (!valid) throw new Error(`The selected file is not a valid ${platform === "snes" ? "Super Nintendo" : "NES"} game. The source file was not changed.`);
   return new Blob([bytes], { type: "application/octet-stream" });
 }
 
-export function resolveFceummRuntimeFile(
+export function resolveLibretroRuntimeFile(
   filename: string,
   scriptDirectory?: string,
   upstreamLocateFile?: RuntimeOptions["locateFile"],
@@ -395,6 +413,8 @@ export function resolveFceummRuntimeFile(
   return upstreamLocateFile?.(filename, scriptDirectory) ?? `${scriptDirectory ?? ""}${filename}`;
 }
 
+export const resolveFceummRuntimeFile = resolveLibretroRuntimeFile;
+
 export function selectRuntimeProfile(environment: {
   crossOriginIsolated: boolean;
   hasSharedArrayBuffer: boolean;
@@ -402,18 +422,19 @@ export function selectRuntimeProfile(environment: {
   vendor?: string;
   platform?: string;
   maxTouchPoints?: number;
-}): RuntimeProfile {
+}, coreKey: WebCoreKey = "fceumm"): RuntimeProfile {
+  const coreAssetName = coreKey === "snes9x" ? "snes9x" : "fceumm";
   if (environment.crossOriginIsolated && environment.hasSharedArrayBuffer && !isAppleWebKit(environment)) {
     return {
       threaded: true,
-      scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
-      wasmPath: "/emulatorjs/cores/fceumm_thread_libretro.wasm",
+      scriptPath: `/emulatorjs/cores/${coreAssetName}_thread_libretro.js`,
+      wasmPath: `/emulatorjs/cores/${coreAssetName}_thread_libretro.wasm`,
     };
   }
   return {
     threaded: false,
-    scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
-    wasmPath: "/emulatorjs/cores/fceumm_libretro.wasm",
+    scriptPath: `/emulatorjs/cores/${coreAssetName}_libretro.js`,
+    wasmPath: `/emulatorjs/cores/${coreAssetName}_libretro.wasm`,
   };
 }
 
@@ -436,6 +457,23 @@ function isAppleWebKit(environment: {
   return isAppleMobile || isDesktopSafari;
 }
 
+function isValidSnesRom(bytes: Uint8Array): boolean {
+  const copierHeaderSize = bytes.byteLength % 0x8000 === 512 ? 512 : 0;
+  return [0x7fc0, 0xffc0, 0x40ffc0].some((baseOffset) => {
+    const offset = copierHeaderSize + baseOffset;
+    if (offset + 64 > bytes.byteLength) return false;
+    const header = bytes.subarray(offset, offset + 64);
+    const mapMode = header[0x15] & 0x3f;
+    let score = [0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35].includes(mapMode) ? 2 : 0;
+    const complement = header[0x1c] | (header[0x1d] << 8);
+    const checksum = header[0x1e] | (header[0x1f] << 8);
+    if ((complement ^ checksum) === 0xffff && (complement !== 0 || checksum !== 0)) score += 2;
+    if ((header[0x3c] | (header[0x3d] << 8)) >= 0x8000) score += 2;
+    if (header.subarray(0, 21).filter((byte) => byte === 0 || byte === 0x20 || (byte >= 0x21 && byte <= 0x7e)).length >= 18) score += 1;
+    if (header[0x17] >= 0x08 && header[0x17] <= 0x0f) score += 1;
+    return score >= 4;
+  });
+}
 function playerMessage(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : String(reason ?? "");
   if (/fetch|network|download/i.test(message)) {
