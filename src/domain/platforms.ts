@@ -8,6 +8,12 @@ export const platforms: Record<PlatformKey, PlatformIdentity> = {
 
 export const webPlayablePlatforms: readonly WebPlayablePlatformKey[] = ["nes", "snes"];
 
+export type ArtworkOrientation = "portrait" | "landscape";
+
+export function artworkOrientation(platform: PlatformKey): ArtworkOrientation {
+  return platform === "snes" ? "landscape" : "portrait";
+}
+
 export function platformShortName(platform: PlatformKey): string {
   if (platform === "snes") return "SNES";
   if (platform === "atari2600") return "Atari 2600";

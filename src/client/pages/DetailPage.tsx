@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { GameDetail } from "../../domain/types";
-import { platformShortName } from "../../domain/platforms";
+import { artworkOrientation, platformShortName } from "../../domain/platforms";
 import { api } from "../api";
 import { Brand, CoverArt, Spinner } from "../components";
 import { continuePlayingRemovalLabel } from "../continue-playing";
@@ -71,9 +71,9 @@ export function DetailPage(): React.JSX.Element {
   return (
     <main className="stream-shell streaming-detail">
       <DetailHeader />
-      <section className="detail-feature">
+      <section className="detail-feature" data-artwork-orientation={artworkOrientation(game.platform)}>
         <div className="detail-backdrop"><CoverArt game={game} eager /></div>
-        <div className="detail-poster"><CoverArt game={game} eager /></div>
+        <div className="detail-poster" data-artwork-orientation={artworkOrientation(game.platform)}><CoverArt game={game} eager /></div>
         <div className="detail-information">
           <p className="stream-kicker">{game.platformName}</p>
           <h1>{game.displayName}</h1>
