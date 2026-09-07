@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { artworkOrientation } from "../../domain/platforms";
 import { CoverArt, GamePosterCard, PortalHeader, Spinner } from "../components";
 import { useCatalog } from "../use-catalog";
 
@@ -13,7 +14,7 @@ export function CollectionsPage(): React.JSX.Element {
     return (
       <main className="stream-shell collection-detail">
         <PortalHeader />
-        <section className="collection-hero"><div className="collection-hero-covers">{selected.games.slice(0, 3).map((game) => <div key={game.id}><CoverArt game={game} eager /></div>)}</div><div><p className="stream-kicker">Collection</p><h1>{selected.name}</h1><p>{selected.description}</p><span>{selected.games.length} games</span></div></section>
+        <section className="collection-hero"><div className="collection-hero-covers">{selected.games.slice(0, 3).map((game) => <div key={game.id} data-artwork-orientation={artworkOrientation(game.platform)}><CoverArt game={game} eager /></div>)}</div><div><p className="stream-kicker">Collection</p><h1>{selected.name}</h1><p>{selected.description}</p><span>{selected.games.length} games</span></div></section>
         <section className="collection-games">{selected.games.map((game) => <GamePosterCard key={game.id} game={game} />)}</section>
       </main>
     );

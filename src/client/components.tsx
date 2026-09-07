@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { artworkOrientation } from "../domain/platforms";
 import type { GameSummary } from "../domain/types";
 import { usePlayerProfile } from "./player-profile";
 import { ProfileAvatar } from "./ProfileAvatar";
@@ -66,6 +67,7 @@ export function CoverArt({ game, eager = false }: { game: GameSummary; eager?: b
   return (
     <img
       className="cover-art"
+      data-artwork-orientation={artworkOrientation(game.platform)}
       src={game.coverUrl}
       alt={`${game.displayName} cover art`}
       loading={eager ? "eager" : "lazy"}
@@ -75,9 +77,10 @@ export function CoverArt({ game, eager = false }: { game: GameSummary; eager?: b
 }
 
 export function GamePosterCard({ game }: { game: GameSummary }): React.JSX.Element {
+  const orientation = artworkOrientation(game.platform);
   return (
-    <Link className="poster-card" to={`/games/${game.id}`} data-controller-target>
-      <div className="poster-image"><CoverArt game={game} />{game.hasServerSave && <span className="progress-badge">Continue</span>}{game.isFavorite && <span className="favorite-badge" aria-label="Favorite">♥</span>}</div>
+    <Link className="poster-card" data-artwork-orientation={orientation} to={`/games/${game.id}`} data-controller-target>
+      <div className="poster-image" data-artwork-orientation={orientation}><CoverArt game={game} />{game.hasServerSave && <span className="progress-badge">Continue</span>}{game.isFavorite && <span className="favorite-badge" aria-label="Favorite">♥</span>}</div>
       <strong>{game.displayName}</strong><small>{game.releaseYear} · {game.genres[0]}</small>
     </Link>
   );
