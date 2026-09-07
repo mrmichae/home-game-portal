@@ -101,7 +101,8 @@ code { font-size: .92em; }
 .game-rail h2 { margin: 0 clamp(24px, 4vw, 64px) 14px; font-size: clamp(19px, 2vw, 25px); letter-spacing: -.025em; }
 .rail-track { display: flex; gap: clamp(10px, 1.2vw, 17px); overflow-x: auto; overflow-y: hidden; padding: 5px clamp(24px, 4vw, 64px) 22px; scrollbar-width: none; scroll-snap-type: x proximity; }
 .rail-track::-webkit-scrollbar { display: none; }
-.poster-card { flex: 0 0 clamp(142px, 14vw, 205px); min-width: 0; display: block; scroll-snap-align: start; transition: transform 160ms ease, filter 160ms ease; }
+.poster-card { --poster-card-width: clamp(142px, 14vw, 205px); flex: 0 0 var(--poster-card-width); min-width: 0; display: block; scroll-snap-align: start; transition: transform 160ms ease, filter 160ms ease; }
+.rail-track > .poster-card[data-artwork-orientation="landscape"] { flex-basis: calc(var(--poster-card-width) + var(--poster-card-width)); }
 .poster-card:hover, .poster-card:focus-visible { transform: scale(1.055); z-index: 5; }
 .poster-image { position: relative; aspect-ratio: 2 / 3; border-radius: 5px; overflow: hidden; background: #20232a; box-shadow: 0 12px 30px rgba(0,0,0,.38); }
 .poster-image[data-artwork-orientation="landscape"] { aspect-ratio: 4 / 3; }
@@ -309,7 +310,7 @@ html[data-theme="atari"] .stream-header { background-color: rgba(62,36,21,.2); b
   .hero-copy h1 { font-size: 48px; }
   .game-description { font-size: 14px; }
   .stream-button { min-height: 43px; padding: 0 17px; font-size: 13px; }
-  .poster-card { flex-basis: 138px; }
+  .poster-card, .continue-card { --poster-card-width: 138px; }
   .wall-heading { display: block; }
   .wall-heading span { display: block; margin-top: 10px; }
   .poster-wall { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 24px 12px; }
@@ -340,7 +341,8 @@ html[data-theme="atari"] .stream-header { background-color: rgba(62,36,21,.2); b
 .library-grid { padding: 5px clamp(24px, 6vw, 92px) 92px; display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 32px 17px; }
 .library-grid .poster-card { width: auto; }
 
-.continue-card { position: relative; flex: 0 0 clamp(142px, 14vw, 205px); min-width: 0; }
+.continue-card { --poster-card-width: clamp(142px, 14vw, 205px); position: relative; flex: 0 0 var(--poster-card-width); min-width: 0; }
+.continue-card:has(> .poster-card[data-artwork-orientation="landscape"]) { flex-basis: calc(var(--poster-card-width) + var(--poster-card-width)); }
 .continue-card .poster-card { width: 100%; }
 .remove-continue { position: absolute; z-index: 7; top: 7px; left: 7px; width: 30px; height: 30px; border: 1px solid rgba(255,255,255,.28); border-radius: 50%; background: rgba(5,6,9,.88); color: #fff; cursor: pointer; font-size: 21px; line-height: 1; box-shadow: 0 5px 16px rgba(0,0,0,.4); opacity: .2; transition: opacity 150ms ease, background 150ms ease; }
 .continue-card:hover .remove-continue, .remove-continue:focus-visible { opacity: 1; }
