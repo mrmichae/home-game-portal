@@ -178,7 +178,7 @@ export class CatalogRepository {
           file.byteSize,
           file.modifiedAtMs,
         );
-        const metadataMatch = platform === "nes" ? matchesByHash.get(file.contentHash) : undefined;
+        const metadataMatch = matchesByHash.get(file.contentHash);
         if (metadataMatch) {
           this.database.prepare(`
             INSERT INTO metadata_matches(
