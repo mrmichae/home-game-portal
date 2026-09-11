@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artworkOrientation } from "./platforms";
+import { artworkOrientation, webPlayablePlatforms } from "./platforms";
 
 describe("platform artwork orientation", () => {
   it("uses the historically appropriate box shape for Nintendo platforms", () => {
@@ -9,5 +9,9 @@ describe("platform artwork orientation", () => {
 
   it("keeps platforms without a landscape convention portrait by default", () => {
     expect(artworkOrientation("atari2600")).toBe("portrait");
+  });
+
+  it("offers browser playback for every supported platform", () => {
+    expect(webPlayablePlatforms).toEqual(["nes", "snes", "atari2600"]);
   });
 });

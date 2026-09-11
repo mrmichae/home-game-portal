@@ -1,6 +1,6 @@
 export type PlatformKey = "nes" | "snes" | "atari2600";
-export type WebPlayablePlatformKey = "nes" | "snes";
-export type WebCoreKey = "fceumm" | "snes9x";
+export type WebPlayablePlatformKey = "nes" | "snes" | "atari2600";
+export type WebCoreKey = "fceumm" | "snes9x" | "stella2014";
 export type ControllerPresetKey = "keyboard" | "joy-con" | "switch-pro" | "apple-tv-remote";
 
 import type { ProfileAvatarKey } from "./profile-avatars.js";
@@ -191,8 +191,16 @@ export const SNES_WEB_CHECKPOINT_COMPATIBILITY = {
   runtimeVersion: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
 } as const;
 
+export const ATARI_2600_WEB_CHECKPOINT_COMPATIBILITY = {
+  adapterKey: "emulatorjs",
+  coreKey: "stella2014",
+  runtimeVersion: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+} as const;
+
 export function webCheckpointCompatibility(coreKey: WebCoreKey): CheckpointCompatibility {
-  return coreKey === "snes9x" ? SNES_WEB_CHECKPOINT_COMPATIBILITY : WEB_CHECKPOINT_COMPATIBILITY;
+  if (coreKey === "snes9x") return SNES_WEB_CHECKPOINT_COMPATIBILITY;
+  if (coreKey === "stella2014") return ATARI_2600_WEB_CHECKPOINT_COMPATIBILITY;
+  return WEB_CHECKPOINT_COMPATIBILITY;
 }
 
 export interface CheckpointCompatibility {

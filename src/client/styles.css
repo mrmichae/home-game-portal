@@ -115,6 +115,8 @@ code { font-size: .92em; }
 .poster-image .game-artwork { min-height: 0; }
 .game-artwork[data-platform="snes"] { padding: 18px 14px 14px; border-radius: 22px 22px 7px 7px; background: linear-gradient(145deg, #b8b6be, #5c5867 72%); }
 .game-artwork[data-platform="snes"] .cartridge-label { border-radius: 10px; border-color: rgba(255,255,255,.72); background: linear-gradient(145deg, hsl(var(--game-hue) 48% 35%), #24212c 75%); }
+.game-artwork[data-platform="atari2600"] { padding: 20px 13px 13px; background: linear-gradient(180deg, #17110d 0 12%, #dc6e28 12% 16%, #f4b73a 16% 20%, #a72f28 20% 24%, #27201a 24%); }
+.game-artwork[data-platform="atari2600"] .cartridge-label { border-color: rgba(244,183,58,.68); background: linear-gradient(145deg, hsl(var(--game-hue) 46% 29%), #17110d 75%); }
 .cartridge-ridges, .cartridge-grip { display: none; }
 .cartridge-label { height: 100%; padding: 18px; border: 2px solid rgba(255,255,255,.55); display: flex; flex-direction: column; justify-content: space-between; background: rgba(0,0,0,.19); }
 .cartridge-label strong { font-size: 54px; letter-spacing: -.08em; }
@@ -334,7 +336,8 @@ html[data-theme="atari"] .stream-header { background-color: rgba(62,36,21,.2); b
 .library-heading, .admin-heading { padding: clamp(58px, 8vw, 100px) clamp(24px, 6vw, 92px) 35px; display: flex; align-items: end; justify-content: space-between; gap: 36px; }
 .library-heading h1, .admin-heading h1 { margin: 0; font-size: clamp(48px, 7vw, 82px); line-height: .95; letter-spacing: -.055em; }
 .library-heading p:last-child, .admin-heading p:last-child { color: var(--muted); }
-.sort-control { min-width: 220px; }
+.library-controls { display: flex; align-items: end; gap: 12px; }
+.sort-control { min-width: 190px; }
 .sort-control > span { display: block; margin: 0 0 7px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; font-weight: 800; }
 .sort-control select { width: 100%; min-height: 46px; padding: 0 42px 0 14px; border: 1px solid rgba(255,255,255,.17); border-radius: 6px; background: var(--surface); color: #fff; font: inherit; font-size: 13px; font-weight: 750; }
 .sort-control select:focus-visible { outline: 3px solid var(--accent-bright); outline-offset: 3px; }
@@ -485,6 +488,7 @@ html[data-theme="atari"] .featured-hero { background-image: linear-gradient(90de
 
 @media (max-width: 760px) {
   .library-heading, .admin-heading { align-items: flex-start; flex-direction: column; }
+  .library-controls { width: 100%; }
   .sort-control { width: 100%; }
   .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 18px; gap: 25px 12px; }
   .metadata-workspace { margin-inline: 0; grid-template-columns: 1fr; border-inline: 0; border-radius: 0; }
@@ -498,6 +502,10 @@ html[data-theme="atari"] .featured-hero { background-image: linear-gradient(90de
   .profile-editor { grid-template-columns: 1fr; }
   .profile-editor-preview { position: static; }
   .profile-editor-preview .profile-avatar-art { width: 220px; }
+}
+
+@media (max-width: 520px) {
+  .library-controls { align-items: stretch; flex-direction: column; }
 }
 
 @media (max-width: 620px) {

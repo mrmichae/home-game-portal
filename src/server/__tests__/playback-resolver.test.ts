@@ -105,6 +105,40 @@ describe("Playback Resolver", () => {
     expect(() => resolver.resolve(catalog.listGames()[0].id)).toThrow("valid Super Nintendo game");
     database.close();
   });
+
+  it("selects Stella and an isolated checkpoint compatibility for an Atari 2600 game", async () => {
+    const libraryRoot = await temporaryDirectory("portal-atari2600-launch-");
+    await writeFile(path.join(libraryRoot, "Adventure.a26"), Buffer.alloc(4_096, 0xa5));
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource(libraryRoot);
+    catalog.commitScan(await scanNesLibrary(libraryRoot));
+    const game = catalog.listGames()[0];
+    const checkpointStore = new VersionedCheckpointStore(path.join(libraryRoot, "saves"), database);
+    const resolver = new PlaybackResolver(catalog, checkpointStore);
+
+    const manifest = resolver.resolve(game.id);
+    const context = resolver.resolveCheckpointSession(manifest.sessionId, game.id, "household");
+
+    expect(game).toMatchObject({ platform: "atari2600", platformName: "Atari 2600" });
+    expect(manifest.playbackProfile).toEqual({ adapter: "emulatorjs", core: "stella2014" });
+    expect(manifest.emulatorProfile).toEqual({ platformKey: "atari2600", policy: "platform-default" });
+    expect(context?.compatibility).toMatchObject({ adapterKey: "emulatorjs", coreKey: "stella2014" });
+    database.close();
+  });
+
+  it("rejects an implausibly small Atari 2600 cartridge image", async () => {
+    const libraryRoot = await temporaryDirectory("portal-invalid-atari2600-launch-");
+    await writeFile(path.join(libraryRoot, "not_a_game.a26"), Buffer.alloc(64));
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource(libraryRoot);
+    catalog.commitScan(await scanNesLibrary(libraryRoot));
+    const resolver = new PlaybackResolver(catalog, new VersionedCheckpointStore(path.join(libraryRoot, "saves"), database));
+
+    expect(() => resolver.resolve(catalog.listGames()[0].id)).toThrow("valid Atari 2600 game");
+    database.close();
+  });
 });
 
 function nesBytes(): Buffer {

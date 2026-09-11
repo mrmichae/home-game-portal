@@ -136,7 +136,7 @@ export function SettingsPage(): React.JSX.Element {
               <button className="stream-button primary" type="submit" disabled={savingLibrary || rescanning} data-controller-target>{savingLibrary ? "Saving…" : "Save location"}</button>
             </form>
             <div className={`library-health ${administration.library.available ? "available" : "unavailable"}`}><span aria-hidden="true">{administration.library.available ? "✓" : "!"}</span><div><strong>{administration.library.available ? "Library available" : "Library unavailable"}</strong><p>{administration.library.statusMessage}</p></div></div>
-            <div className="library-scan-row"><div><h3>Catalog scan</h3><p>Reads `.nes`, `.sfc`, `.smc`, and `.snes` files beneath this directory and updates the Catalog. Source Game Files are never renamed, modified, or deleted.</p><small>{administration.library.lastScannedAt ? `Last scanned ${formatSettingsDate(administration.library.lastScannedAt)}` : "Not scanned yet"}</small></div><button className="stream-button secondary" type="button" onClick={() => void rescanLibrary()} disabled={rescanning || savingLibrary || !administration.library.available} data-controller-target>{rescanning ? "Scanning…" : "↻ Rescan library"}</button></div>
+            <div className="library-scan-row"><div><h3>Catalog scan</h3><p>Reads NES, Super Nintendo, and Atari 2600 game files beneath this directory and updates the Catalog. Atari `.bin` files must be inside an Atari/2600-named folder. Source Game Files are never renamed, modified, or deleted.</p><small>{administration.library.lastScannedAt ? `Last scanned ${formatSettingsDate(administration.library.lastScannedAt)}` : "Not scanned yet"}</small></div><button className="stream-button secondary" type="button" onClick={() => void rescanLibrary()} disabled={rescanning || savingLibrary || !administration.library.available} data-controller-target>{rescanning ? "Scanning…" : "↻ Rescan library"}</button></div>
           </> : <p className="settings-loading">Loading Library configuration…</p>}
           <p className={`administration-message ${administrationStatusKind}`} role="status" aria-live="polite">{administrationStatus}</p>
         </section>
@@ -164,6 +164,7 @@ function displayRuntimeName(value: string): string {
   if (value === "emulatorjs") return "EmulatorJS";
   if (value === "fceumm") return "FCEUmm";
   if (value === "snes9x") return "Snes9x";
+  if (value === "stella2014") return "Stella 2014";
   return value;
 }
 

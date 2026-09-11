@@ -4,7 +4,9 @@ import { platforms } from "../domain/platforms.js";
 import type { DiscoveredGameFile, WebPlayablePlatformKey } from "../domain/types.js";
 import { normalizeGameFilename } from "./filename-normalizer.js";
 
-const CATALOGS: Record<WebPlayablePlatformKey, { url: string; cacheName: string }> = {
+type MetadataPlatformKey = Exclude<WebPlayablePlatformKey, "atari2600">;
+
+const CATALOGS: Record<MetadataPlatformKey, { url: string; cacheName: string }> = {
   nes: { url: "https://gamedb.retronian.com/api/v1/fc.json", cacheName: "retronian-fc.json" },
   snes: { url: "https://gamedb.retronian.com/api/v1/sfc.json", cacheName: "retronian-sfc.json" },
 };
@@ -47,7 +49,7 @@ export class RetronianMetadataProvider {
     return matches.flat();
   }
 
-  private async matchPlatform(files: DiscoveredGameFile[], platform: WebPlayablePlatformKey): Promise<MetadataMatch[]> {
+  private async matchPlatform(files: DiscoveredGameFile[], platform: MetadataPlatformKey): Promise<MetadataMatch[]> {
     const entries = await this.loadCatalog(platform);
     const byHash = new Map<string, { entry: RetronianEntry; region?: string }>();
     const byTitle = new Map<string, { entry: RetronianEntry; region?: string } | null>();
@@ -67,7 +69,7 @@ export class RetronianMetadataProvider {
     });
   }
 
-  private async loadCatalog(platform: WebPlayablePlatformKey): Promise<RetronianEntry[]> {
+  private async loadCatalog(platform: MetadataPlatformKey): Promise<RetronianEntry[]> {
     const catalog = CATALOGS[platform];
     const cachePath = path.join(this.cacheRoot, catalog.cacheName);
     try {
@@ -118,7 +120,7 @@ function parseCatalog(value: string): RetronianEntry[] {
   return parsed.filter((entry): entry is RetronianEntry => Boolean(entry) && typeof entry === "object" && typeof (entry as RetronianEntry).id === "string");
 }
 
-function toMetadataMatch(contentHash: string, entry: RetronianEntry, matchedRegion: string | undefined, fallbackDisplayName: string, platform: WebPlayablePlatformKey): MetadataMatch {
+function toMetadataMatch(contentHash: string, entry: RetronianEntry, matchedRegion: string | undefined, fallbackDisplayName: string, platform: MetadataPlatformKey): MetadataMatch {
   const englishTitles = (entry.titles ?? []).filter((title) => title.lang === "en");
   const providerDisplayName = englishTitles.find((title) => title.region === matchedRegion)?.text
     ?? englishTitles.find((title) => title.region === "us")?.text

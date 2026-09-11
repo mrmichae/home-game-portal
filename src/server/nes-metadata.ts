@@ -93,7 +93,9 @@ export function metadataForGame(displayName: string, relativePath: string, platf
   const coverName = coverAliases[sourceName] ?? sourceName.replace(/[&*/:`<>?\\|]/g, "_");
   const thumbnailRepository = platform === "snes"
     ? "Nintendo_-_Super_Nintendo_Entertainment_System"
-    : "Nintendo_-_Nintendo_Entertainment_System";
+    : platform === "atari2600"
+      ? "Atari_-_2600"
+      : "Nintendo_-_Nintendo_Entertainment_System";
   return {
     ...curated,
     series: seriesForGame(displayName),
@@ -108,6 +110,13 @@ function fallbackMetadata(platform: PlatformKey): CuratedMetadata {
       releaseYear: 1991,
       description: "A game discovered in your private Super Nintendo Entertainment System library.",
       genres: ["Super Nintendo Entertainment System"],
+    };
+  }
+  if (platform === "atari2600") {
+    return {
+      releaseYear: 1977,
+      description: "A game discovered in your private Atari 2600 library.",
+      genres: ["Atari 2600"],
     };
   }
   return {

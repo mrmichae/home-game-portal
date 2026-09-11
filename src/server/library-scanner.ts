@@ -11,6 +11,7 @@ const ROM_PLATFORMS: Readonly<Record<string, WebPlayablePlatformKey>> = {
   ".sfc": "snes",
   ".smc": "snes",
   ".snes": "snes",
+  ".a26": "atari2600",
 };
 
 export async function scanGameLibrary(libraryRoot: string): Promise<DiscoveredGameFile[]> {
@@ -47,7 +48,7 @@ async function visitDirectory(
       await visitDirectory(root, relativePath, discovered);
       continue;
     }
-    const platform = ROM_PLATFORMS[path.extname(entry.name).toLocaleLowerCase("en-US")];
+    const platform = platformForGameFile(relativePath);
     if (!stats.isFile() || !platform) continue;
 
     assertRealPathWithinRoot(root, await realpath(absolutePath));
@@ -62,7 +63,19 @@ async function visitDirectory(
   }
 }
 
-/** @deprecated Use scanGameLibrary for the mixed NES/SNES Library Source. */
+function platformForGameFile(relativePath: string): WebPlayablePlatformKey | undefined {
+  const extension = path.extname(relativePath).toLocaleLowerCase("en-US");
+  if (extension !== ".bin") return ROM_PLATFORMS[extension];
+  const directories = relativePath.split(path.posix.sep).slice(0, -1);
+  return directories.some(isAtari2600Directory) ? "atari2600" : undefined;
+}
+
+function isAtari2600Directory(directory: string): boolean {
+  const normalized = directory.normalize("NFKD").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "");
+  return normalized === "atari" || normalized === "atari2600" || normalized === "2600" || normalized === "vcs";
+}
+
+/** @deprecated Use scanGameLibrary for the mixed-platform Library Source. */
 export const scanNesLibrary = scanGameLibrary;
 
 async function sha256File(filename: string): Promise<string> {

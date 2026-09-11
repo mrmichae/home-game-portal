@@ -1,6 +1,6 @@
 # Third-party notices
 
-The application vendors the minimum NES- and SNES-capable files from EmulatorJS 4.2.3
+The application vendors the minimum NES-, SNES-, and Atari 2600-capable files from EmulatorJS 4.2.3
 so playback does not need the public CDN at runtime.
 
 - EmulatorJS 4.2.3: <https://github.com/EmulatorJS/EmulatorJS/tree/v4.2.3>, GPL-3.0.
@@ -12,8 +12,12 @@ so playback does not need the public CDN at runtime.
   non-commercial-use license.
   Source: <https://github.com/snes9xgit/snes9x>.
   License: `THIRD_PARTY_LICENSES/Snes9x-License.txt`.
+- Stella 2014 libretro core, distributed by the EmulatorJS 4.2.3 release: GPL-2.0.
+  Source: <https://github.com/libretro/stella2014-libretro>.
+  License: `THIRD_PARTY_LICENSES/Stella2014-GPL-2.0.txt`.
 - Retronian GameDB: <https://github.com/retronian/retronian-gamedb>. The application
-  downloads its Famicom/NES JSON catalog at runtime for local Metadata Matching. Data is
+  downloads its Famicom/NES and Super Famicom/SNES JSON catalogs at runtime for local
+  Metadata Matching. Data is
   CC BY-SA 4.0; code is MIT. The catalog is cached in persistent application data and is
   not distributed in this repository or container image.
 
@@ -40,7 +44,17 @@ dc7ac963eb7935a7ac78956235ac0b8912ec785c57026336825aa2ed8031b3ad  public/emulato
 2bc7b519bc185af151cc7ebc42c0a926a125be174c6467c24bb0495820adf0bf  public/emulatorjs/cores/snes9x_libretro.wasm
 46330c4a8b542dae427781fa5ca0cf24ec54ee1e67880a690976e9af28e54913  public/emulatorjs/cores/snes9x_thread_libretro.js
 b61d83a5ecd8e40f45a73bb61ec531b4ec7dae81b7f4456f1729bf4ab080d7e4  public/emulatorjs/cores/snes9x_thread_libretro.wasm
+5384d84ed2c90ca41e72d9f1b8b6701e3a28738d5fff65ac1d137a66f9596a37  public/emulatorjs/cores/stella2014-wasm.data
+6c96c6b1746f3f05ca599066abe131a36c77ca61fc20a9e2a7560540457c487d  public/emulatorjs/cores/stella2014-wasm.upstream.7z
+c9920b95db48f678294daa72a289c19846e74ba69ca6d6094a76fb9f560fb39a  public/emulatorjs/cores/reports/stella2014.json
+7c8f1c8f2b1d56b88a8d949221c3948433ec7ec5dd5ea081c9698dd6fcf70a73  public/emulatorjs/cores/stella2014_libretro.js
+86fa4c980ebc2d0926f2e8998774dd4730b3649157e9ed2ac87634150fb0c48e  public/emulatorjs/cores/stella2014_libretro.wasm
+4f73405ba1605662ecc5c74c196da910171ccbe0bee065730f072cf4fc24327b  public/emulatorjs/cores/stella2014-thread-wasm.data
+2c26366dc411d7bb92123a7ef4518b05db01be72761a59037d6f206112204d9f  public/emulatorjs/cores/stella2014-thread-wasm.upstream.7z
+868eebd75e539f44c4941c461912aa64bb61fd448a4f266a4197da2228b03615  public/emulatorjs/cores/stella2014_thread_libretro.js
+4199be47c4560a298911c432f88ebed1dd1a68ed0d9cc5a8ea4403c79f6056ea  public/emulatorjs/cores/stella2014_thread_libretro.wasm
 70efeee282d82a6e9d26aeed5466d08c632369858371dc6a4644c8dcedc2be78  THIRD_PARTY_LICENSES/Snes9x-License.txt
+a6996dcf0c334281f734560926e079b2dbbd5b78e81c0ca00a413ec01e1cd2fb  THIRD_PARTY_LICENSES/Stella2014-GPL-2.0.txt
 ```
 
 No game, firmware, metadata, or artwork files are included.
@@ -51,12 +65,12 @@ kept beside it for provenance. EmulatorJS accepts both formats; ZIP avoids a 7z 
 failure observed in the Codex in-app browser. The extracted JavaScript wrapper and
 WASM binary are also resolved directly by the Playback Adapter because that browser's
 ZIP worker returned an undefined WASM payload. No core source or binary was modified.
-The same packaging is used for the pinned compatible and threaded Snes9x runtimes. The
+The same packaging is used for the pinned compatible and threaded Snes9x and Stella 2014 runtimes. The
 adapter selects a threaded core only when the browser exposes `SharedArrayBuffer` in a
 cross-origin-isolated context.
 The vendored loader also contains one compatibility line that registers EmulatorJS's
 documented `EJS_onExit` callback; the 4.2.3 loader omitted that event binding.
 
 Box-art URLs point to the public
-[`libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System`](https://github.com/libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System)
-repository. Artwork remains hosted by that project and is not copied into this application.
+platform repositories in [`libretro-thumbnails`](https://github.com/libretro-thumbnails).
+Artwork remains hosted by that project and is not copied into this application.

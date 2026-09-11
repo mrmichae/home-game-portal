@@ -52,7 +52,7 @@ export function GameArtwork({ game, large = false }: { game: GameSummary; large?
     <div className={`game-artwork${large ? " game-artwork-large" : ""}`} data-platform={game.platform} style={{ "--game-hue": hue } as React.CSSProperties}>
       <div className="cartridge-ridges" aria-hidden="true" />
       <div className="cartridge-label">
-        <span className="cartridge-system">{game.platform === "snes" ? "Super Nintendo" : "Entertainment System"}</span>
+        <span className="cartridge-system">{game.platform === "snes" ? "Super Nintendo" : game.platform === "atari2600" ? "Atari 2600" : "Entertainment System"}</span>
         <strong aria-hidden="true">{initials}</strong>
         <span>{game.displayName}</span>
       </div>

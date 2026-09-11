@@ -36,12 +36,14 @@ describe("SNES catalog migration", () => {
     const upgradedCatalog = new CatalogRepository(upgradedDatabase);
     expect(upgradedCatalog.getGame(nesGameId)).toMatchObject({ platform: "nes", isFavorite: true });
     expect(upgradedCatalog.getEmulatorProfile("snes")).toMatchObject({ enabled: true, webPlayback: { coreKey: "snes9x" } });
+    expect(upgradedCatalog.getEmulatorProfile("atari2600")).toMatchObject({ enabled: true, webPlayback: { coreKey: "stella2014" } });
 
     upgradedCatalog.commitScan([
       { relativePath: "NES/Example.nes", displayName: "Example", platform: "nes", contentHash: "nes-hash", byteSize: 1, modifiedAtMs: 1 },
       { relativePath: "SNES/Example.sfc", displayName: "Example", platform: "snes", contentHash: "snes-hash", byteSize: 2, modifiedAtMs: 2 },
+      { relativePath: "Atari 2600/Example.a26", displayName: "Example", platform: "atari2600", contentHash: "atari-hash", byteSize: 4_096, modifiedAtMs: 3 },
     ]);
-    expect(upgradedCatalog.listGames()).toHaveLength(2);
+    expect(upgradedCatalog.listGames()).toHaveLength(3);
     expect(upgradedDatabase.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     upgradedDatabase.close();
   });

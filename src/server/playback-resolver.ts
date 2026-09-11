@@ -131,19 +131,29 @@ export class PlaybackResolver {
   private webCoreForGame(gameId: string): WebCoreKey {
     const game = this.catalog.getGame(gameId);
     const coreKey = game && this.catalog.getEmulatorProfile(game.platform)?.webPlayback?.coreKey;
-    if (coreKey === "fceumm" || coreKey === "snes9x") return coreKey;
+    if (coreKey === "fceumm" || coreKey === "snes9x" || coreKey === "stella2014") return coreKey;
     throw new Error("The configured web playback adapter is unavailable.");
   }
 }
 
 function isSupportedWebCore(platform: PlatformKey, coreKey: string): coreKey is WebCoreKey {
-  return (platform === "nes" && coreKey === "fceumm") || (platform === "snes" && coreKey === "snes9x");
+  return (platform === "nes" && coreKey === "fceumm")
+    || (platform === "snes" && coreKey === "snes9x")
+    || (platform === "atari2600" && coreKey === "stella2014");
 }
 
 function assertPlayableGameFile(absolutePath: string, platform: PlatformKey): void {
   if (platform === "nes") return assertNesCartridge(absolutePath);
   if (platform === "snes") return assertSnesCartridge(absolutePath);
+  if (platform === "atari2600") return assertAtari2600Cartridge(absolutePath);
   throw new Error("The selected game platform is not supported in the browser.");
+}
+
+function assertAtari2600Cartridge(absolutePath: string): void {
+  const size = statSync(absolutePath).size;
+  if (size < 128 || size > 1024 * 1024) {
+    throw new Error("The selected file is not a valid Atari 2600 game. Rescan the Library Source and try again.");
+  }
 }
 
 function assertNesCartridge(absolutePath: string): void {
