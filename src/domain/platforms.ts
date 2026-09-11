@@ -6,7 +6,7 @@ export const platforms: Record<PlatformKey, PlatformIdentity> = {
   atari2600: { key: "atari2600", displayName: "Atari 2600", emulationCapability: "atari2600" },
 };
 
-export const webPlayablePlatforms: readonly WebPlayablePlatformKey[] = ["nes", "snes"];
+export const webPlayablePlatforms: readonly WebPlayablePlatformKey[] = ["nes", "snes", "atari2600"];
 
 export type ArtworkOrientation = "portrait" | "landscape";
 

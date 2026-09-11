@@ -12,4 +12,7 @@ sample-library/**/*.nes
 sample-library/**/*.sfc
 sample-library/**/*.smc
 sample-library/**/*.snes
+sample-library/**/*.a26
+sample-library/**/[Aa]tari*/**/*.bin
+sample-library/**/2600/**/*.bin
 sample-library/**/*.zip

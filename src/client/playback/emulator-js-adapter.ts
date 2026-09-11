@@ -352,7 +352,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         gameFileUrl = URL.createObjectURL(gameFile);
         // EmulatorJS derives a virtual filename from the URL. Preserve the platform
         // extension in the fragment while retaining the revocable object URL.
-        host.EJS_gameUrl = `${gameFileUrl}#game.${manifest.platform === "snes" ? "sfc" : "nes"}`;
+        host.EJS_gameUrl = `${gameFileUrl}#game.${gameExtension(manifest.platform)}`;
       } catch (error) {
         if (!disposed) reportError(playerMessage(error));
         return;
@@ -398,8 +398,10 @@ export async function fetchGameFile(
   const bytes = new Uint8Array(await response.arrayBuffer());
   const valid = platform === "snes"
     ? isValidSnesRom(bytes)
-    : bytes.byteLength >= 16 && bytes[0] === 0x4e && bytes[1] === 0x45 && bytes[2] === 0x53 && bytes[3] === 0x1a;
-  if (!valid) throw new Error(`The selected file is not a valid ${platform === "snes" ? "Super Nintendo" : "NES"} game. The source file was not changed.`);
+    : platform === "atari2600"
+      ? isValidAtari2600Rom(bytes)
+      : bytes.byteLength >= 16 && bytes[0] === 0x4e && bytes[1] === 0x45 && bytes[2] === 0x53 && bytes[3] === 0x1a;
+  if (!valid) throw new Error(`The selected file is not a valid ${platformDisplayName(platform)} game. The source file was not changed.`);
   return new Blob([bytes], { type: "application/octet-stream" });
 }
 
@@ -423,7 +425,7 @@ export function selectRuntimeProfile(environment: {
   platform?: string;
   maxTouchPoints?: number;
 }, coreKey: WebCoreKey = "fceumm"): RuntimeProfile {
-  const coreAssetName = coreKey === "snes9x" ? "snes9x" : "fceumm";
+  const coreAssetName = coreKey;
   if (environment.crossOriginIsolated && environment.hasSharedArrayBuffer && !isAppleWebKit(environment)) {
     return {
       threaded: true,
@@ -474,6 +476,23 @@ function isValidSnesRom(bytes: Uint8Array): boolean {
     return score >= 4;
   });
 }
+
+function isValidAtari2600Rom(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 128 && bytes.byteLength <= 1024 * 1024;
+}
+
+function gameExtension(platform: PlatformKey): string {
+  if (platform === "snes") return "sfc";
+  if (platform === "atari2600") return "a26";
+  return "nes";
+}
+
+function platformDisplayName(platform: PlatformKey): string {
+  if (platform === "snes") return "Super Nintendo";
+  if (platform === "atari2600") return "Atari 2600";
+  return "NES";
+}
+
 function playerMessage(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : String(reason ?? "");
   if (/fetch|network|download/i.test(message)) {

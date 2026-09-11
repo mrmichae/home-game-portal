@@ -722,8 +722,19 @@ function gameIdentityKey(displayName: string): string {
   return displayName.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
-function platformForRelativePath(relativePath: string): "nes" | "snes" {
-  return [".sfc", ".smc", ".snes"].includes(path.extname(relativePath).toLocaleLowerCase("en-US")) ? "snes" : "nes";
+function platformForRelativePath(relativePath: string): PlatformKey {
+  const extension = path.extname(relativePath).toLocaleLowerCase("en-US");
+  if ([".sfc", ".smc", ".snes"].includes(extension)) return "snes";
+  if (extension === ".a26") return "atari2600";
+  if (extension === ".bin") {
+    const directories = relativePath.split(/[\\/]/).slice(0, -1);
+    const hasAtariDirectory = directories.some((directory) =>
+      ["atari", "atari2600", "2600", "vcs"].includes(
+        directory.normalize("NFKD").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, ""),
+      ));
+    if (hasAtariDirectory) return "atari2600";
+  }
+  return "nes";
 }
 
 function toGameSummary(row: GameRow): GameSummary {

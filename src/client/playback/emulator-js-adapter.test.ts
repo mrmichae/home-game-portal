@@ -35,6 +35,15 @@ describe("FCEUmm runtime asset resolution", () => {
     expect([...singleThreaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
     expect([...threaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
   });
+
+  it("ships the pinned Stella 2014 WebAssembly modules", async () => {
+    const [singleThreaded, threaded] = await Promise.all([
+      readFile(path.resolve("public/emulatorjs/cores/stella2014_libretro.wasm")),
+      readFile(path.resolve("public/emulatorjs/cores/stella2014_thread_libretro.wasm")),
+    ]);
+    expect([...singleThreaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    expect([...threaded.subarray(0, 8)]).toEqual([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+  });
 });
 
 describe("server Game File preparation", () => {
@@ -65,6 +74,24 @@ describe("server Game File preparation", () => {
     );
 
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("accepts a plausible Atari 2600 cartridge image and rejects an implausible one", async () => {
+    const bytes = new Uint8Array(4_096).fill(0xa5);
+    const file = await fetchGameFile(
+      "/api/playback/files/atari-session",
+      new AbortController().signal,
+      "atari2600",
+      async () => new Response(bytes.slice().buffer as ArrayBuffer),
+    );
+
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
+    await expect(fetchGameFile(
+      "/api/playback/files/invalid-atari-session",
+      new AbortController().signal,
+      "atari2600",
+      async () => new Response(new Uint8Array(64)),
+    )).rejects.toThrow("valid Atari 2600 game");
   });
 });
 
@@ -257,6 +284,19 @@ describe("runtime selection", () => {
       threaded: false,
       scriptPath: "/emulatorjs/cores/snes9x_libretro.js",
       wasmPath: "/emulatorjs/cores/snes9x_libretro.wasm",
+    });
+  });
+
+  it("selects the matching Stella 2014 runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/stella2014_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/stella2014_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_libretro.wasm",
     });
   });
 });

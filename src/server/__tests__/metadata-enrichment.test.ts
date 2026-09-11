@@ -155,6 +155,21 @@ describe("automatic Metadata Match enrichment", () => {
     });
     database.close();
   });
+
+  it("leaves Atari 2600 files on filename metadata without requesting another platform catalog", async () => {
+    const fetcher = vi.fn(async () => new Response("[]")) as typeof fetch;
+    const provider = new RetronianMetadataProvider(path.join(os.tmpdir(), "unused-atari-metadata"), fetcher);
+
+    await expect(provider.match([{
+      relativePath: "Atari 2600/Adventure.a26",
+      displayName: "Adventure",
+      platform: "atari2600",
+      contentHash: "atari123",
+      byteSize: 4_096,
+      modifiedAtMs: 1,
+    }])).resolves.toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });
 
 function fixtureMetadata() {

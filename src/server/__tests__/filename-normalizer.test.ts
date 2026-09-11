@@ -11,6 +11,8 @@ describe("filename normalization", () => {
     ["chrono_trigger_(USA).sfc", "Chrono Trigger"],
     ["Super Metroid (USA).smc", "Super Metroid"],
     ["F-Zero.snes", "F Zero"],
+    ["Adventure (USA).a26", "Adventure"],
+    ["Pitfall (USA).bin", "Pitfall"],
   ])("derives %s as %s", (filename, expected) => {
     expect(normalizeGameFilename(filename)).toBe(expected);
   });

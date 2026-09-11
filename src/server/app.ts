@@ -351,7 +351,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Content-Type", "application/octet-stream");
     const extension = path.extname(absolutePath).toLocaleLowerCase("en-US");
-    const safeExtension = [".nes", ".sfc", ".smc", ".snes"].includes(extension) ? extension : ".rom";
+    const safeExtension = [".nes", ".sfc", ".smc", ".snes", ".a26", ".bin"].includes(extension) ? extension : ".rom";
     response.setHeader("Content-Disposition", `inline; filename="game${safeExtension}"`);
     return response.sendFile(absolutePath);
   });
