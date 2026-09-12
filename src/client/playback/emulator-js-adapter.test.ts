@@ -6,6 +6,8 @@ import {
   controllerMappingFor,
   createCheckpointGatedStartHandler,
   disableImplicitCoreRestart,
+  disableImplicitStartupState,
+  emulatorGameName,
   fetchGameFile,
   isBenignRuntimeRejection,
   resolveFceummRuntimeFile,
@@ -146,6 +148,20 @@ describe("player lifecycle", () => {
     disableImplicitCoreRestart(host);
 
     expect(host.EJS_softLoad).toBe(0);
+  });
+
+  it("removes an empty startup-state URL instead of letting EmulatorJS load the player document as state", () => {
+    const host = { EJS_loadStateURL: "" };
+
+    disableImplicitStartupState(host);
+
+    expect(host).not.toHaveProperty("EJS_loadStateURL");
+    expect(typeof host.EJS_loadStateURL).not.toBe("string");
+  });
+
+  it("gives Atari blob content a cartridge extension without changing other platform names", () => {
+    expect(emulatorGameName("Ms. Pac-Man", "atari2600")).toBe("Ms. Pac-Man.a26");
+    expect(emulatorGameName("Super Mario Bros.", "nes")).toBe("Super Mario Bros.");
   });
 
   it("does not treat an unavailable screen wake lock as a playback failure", () => {
