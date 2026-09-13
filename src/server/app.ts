@@ -11,7 +11,7 @@ import { ArtworkStore } from "./artwork-store.js";
 import { PortalConfiguration } from "./portal-configuration.js";
 import { PortalPresentation } from "./portal-presentation.js";
 import type { BrowseRowInput, CollectionInput, MetadataCorrectionInput, ScanStatus } from "../domain/types.js";
-import { RetronianMetadataProvider } from "./metadata-provider.js";
+import { PortalMetadataProvider, type MetadataProvider } from "./metadata-provider.js";
 
 export interface PortalApplication {
   app: Express;
@@ -24,7 +24,7 @@ export interface PortalApplication {
 }
 
 interface PortalApplicationDependencies {
-  metadataProvider?: Pick<RetronianMetadataProvider, "match">;
+  metadataProvider?: MetadataProvider;
 }
 
 export function createPortalApplication(config: AppConfig, dependencies: PortalApplicationDependencies = {}): PortalApplication {
@@ -36,7 +36,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
   const checkpointStore = new VersionedCheckpointStore(config.savesDir, database);
   const playbackResolver = new PlaybackResolver(catalog, checkpointStore);
   const artworkStore = new ArtworkStore(config.artworkDir, catalog);
-  const metadataProvider = dependencies.metadataProvider ?? new RetronianMetadataProvider(path.join(config.dataDir, "metadata"));
+  const metadataProvider = dependencies.metadataProvider ?? new PortalMetadataProvider(path.join(config.dataDir, "metadata"));
   const app = express();
   let scanState: ScanStatus = { status: "idle", lastScannedAt: catalog.getLibrarySource().lastScannedAt, message: null };
   let activeScan: Promise<ScanCommitResult> | null = null;

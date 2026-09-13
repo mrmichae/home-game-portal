@@ -42,6 +42,7 @@ describe("mixed Game Library Source scanning", () => {
       platform: "nes",
       byteSize: gameBytes.byteLength,
       contentHash: createHash("sha256").update(gameBytes).digest("hex"),
+      contentSha1: createHash("sha1").update(gameBytes).digest("hex"),
     }), expect.objectContaining({ relativePath: "SNES/Chrono Trigger (USA).sfc", displayName: "Chrono Trigger", platform: "snes" }),
     expect.objectContaining({ relativePath: "SNES/EarthBound.smc", displayName: "EarthBound", platform: "snes" }),
     expect.objectContaining({ relativePath: "SNES/Super Metroid.snes", displayName: "Super Metroid", platform: "snes" }),

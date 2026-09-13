@@ -56,7 +56,7 @@ async function visitDirectory(
       relativePath,
       displayName: normalizeGameFilename(entry.name),
       platform,
-      contentHash: await sha256File(absolutePath),
+      ...await hashFile(absolutePath),
       byteSize: stats.size,
       modifiedAtMs: Math.trunc(stats.mtimeMs),
     });
@@ -78,13 +78,17 @@ function isAtari2600Directory(directory: string): boolean {
 /** @deprecated Use scanGameLibrary for the mixed-platform Library Source. */
 export const scanNesLibrary = scanGameLibrary;
 
-async function sha256File(filename: string): Promise<string> {
-  const hash = createHash("sha256");
+async function hashFile(filename: string): Promise<{ contentHash: string; contentSha1: string }> {
+  const sha256 = createHash("sha256");
+  const sha1 = createHash("sha1");
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(filename);
-    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("data", (chunk) => {
+      sha256.update(chunk);
+      sha1.update(chunk);
+    });
     stream.on("error", reject);
     stream.on("end", resolve);
   });
-  return hash.digest("hex");
+  return { contentHash: sha256.digest("hex"), contentSha1: sha1.digest("hex") };
 }
