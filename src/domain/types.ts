@@ -113,13 +113,20 @@ export interface CollectionInput {
   gameIds: string[];
 }
 
-export type BrowseRowRule =
+export interface BrowseRowFilters {
+  platform?: PlatformKey;
+  genres?: string[];
+  series?: string;
+}
+
+export type BrowseRowRule = (
   | { type: "all" }
   | { type: "continue" }
   | { type: "favorites" }
   | { type: "recent" }
   | { type: "genres"; genres: string[] }
-  | { type: "collection"; collectionId: string };
+  | { type: "collection"; collectionId: string }
+) & { filters?: BrowseRowFilters };
 
 export interface BrowseRowDefinition {
   id: string;

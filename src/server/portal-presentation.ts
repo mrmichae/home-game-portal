@@ -1,7 +1,9 @@
+import { platforms } from "../domain/platforms.js";
 import { randomUUID } from "node:crypto";
 import { deriveInitialCollections, slugify } from "../domain/catalog-presentation.js";
 import type {
   BrowseRowDefinition,
+  BrowseRowFilters,
   BrowseRowInput,
   BrowseRowRule,
   CatalogCollection,
@@ -23,7 +25,7 @@ interface CollectionRow {
 }
 
 interface CollectionGameRow { collection_id: string; game_id: string }
-interface BrowseRowRecord { id: string; title: string; source_type: BrowseRowRule["type"]; source_value: string | null; position: number }
+interface BrowseRowRecord { id: string; title: string; source_type: BrowseRowRule["type"]; source_value: string | null; position: number; filters_json: string }
 
 export class PortalPresentation {
   constructor(private readonly database: PortalDatabase) {}
@@ -33,7 +35,7 @@ export class PortalPresentation {
     const collections = this.collectionsForCatalog(games);
     return {
       collections,
-      browseRows: this.listBrowseRows().map((row) => ({ ...row, games: resolveGames(row.rule, games, collections) })),
+      browseRows: this.listBrowseRows().map((row) => ({ ...row, games: resolveGames(row.rule, games, collections).filter((game) => matchesFilters(game, row.rule.filters)) })),
     };
   }
 
@@ -100,16 +102,16 @@ export class PortalPresentation {
     const normalized = validateBrowseRow(input, collectionIds);
     const id = `row-${randomUUID()}`;
     const position = (this.database.prepare("SELECT COALESCE(MAX(position), 0) + 10 AS position FROM browse_rows").get() as unknown as { position: number }).position;
-    this.database.prepare("INSERT INTO browse_rows(id, title, source_type, source_value, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(id, normalized.title, normalized.rule.type, encodeRuleValue(normalized.rule), position, now.toISOString(), now.toISOString());
+    this.database.prepare("INSERT INTO browse_rows(id, title, source_type, source_value, position, created_at, updated_at, filters_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, normalized.title, normalized.rule.type, encodeRuleValue(normalized.rule), position, now.toISOString(), now.toISOString(), JSON.stringify(normalized.rule.filters ?? {}));
     return this.getBrowseRow(id)!;
   }
 
   updateBrowseRow(id: string, input: BrowseRowInput, collectionIds: Set<string>, now = new Date()): BrowseRowDefinition {
     if (!this.getBrowseRow(id)) throw new Error("Browse Row not found.");
     const normalized = validateBrowseRow(input, collectionIds);
-    this.database.prepare("UPDATE browse_rows SET title = ?, source_type = ?, source_value = ?, updated_at = ? WHERE id = ?")
-      .run(normalized.title, normalized.rule.type, encodeRuleValue(normalized.rule), now.toISOString(), id);
+    this.database.prepare("UPDATE browse_rows SET title = ?, source_type = ?, source_value = ?, updated_at = ?, filters_json = ? WHERE id = ?")
+      .run(normalized.title, normalized.rule.type, encodeRuleValue(normalized.rule), now.toISOString(), JSON.stringify(normalized.rule.filters ?? {}), id);
     return this.getBrowseRow(id)!;
   }
 
@@ -167,12 +169,12 @@ export class PortalPresentation {
   }
 
   private listBrowseRows(): BrowseRowDefinition[] {
-    const rows = this.database.prepare("SELECT id, title, source_type, source_value, position FROM browse_rows ORDER BY position, title COLLATE NOCASE").all() as unknown as BrowseRowRecord[];
+    const rows = this.database.prepare("SELECT id, title, source_type, source_value, position, filters_json FROM browse_rows ORDER BY position, title COLLATE NOCASE").all() as unknown as BrowseRowRecord[];
     return rows.map(toBrowseRowDefinition);
   }
 
   private getBrowseRow(id: string): BrowseRowDefinition | null {
-    const row = this.database.prepare("SELECT id, title, source_type, source_value, position FROM browse_rows WHERE id = ?").get(id) as unknown as BrowseRowRecord | undefined;
+    const row = this.database.prepare("SELECT id, title, source_type, source_value, position, filters_json FROM browse_rows WHERE id = ?").get(id) as unknown as BrowseRowRecord | undefined;
     return row ? toBrowseRowDefinition(row) : null;
   }
 
@@ -240,6 +242,8 @@ function toBrowseRowDefinition(row: BrowseRowRecord): BrowseRowDefinition {
     : type === "collection"
       ? { type, collectionId: row.source_value ?? "" }
       : { type };
+  const filters: BrowseRowFilters = JSON.parse(row.filters_json);
+  if (Object.keys(filters).length) rule.filters = filters;
   return { id: row.id, title: row.title, position: row.position, rule };
 }
 
@@ -266,15 +270,46 @@ function validateBrowseRow(input: BrowseRowInput, collectionIds: Set<string>): B
   const rule = input.rule;
   if (!title || title.length > 64) throw new Error("Browse Row title must be between 1 and 64 characters.");
   if (!rule || !["all", "continue", "favorites", "recent", "genres", "collection"].includes(rule.type)) throw new Error("Choose a valid Browse Row source.");
+  const filters = validateFilters(rule.filters);
+  const filterFields = Object.keys(filters).length ? { filters } : {};
   if (rule.type === "genres") {
     const genres = [...new Set((Array.isArray(rule.genres) ? rule.genres : []).map((genre) => String(genre).trim()).filter(Boolean))].slice(0, 12);
     if (genres.length === 0) throw new Error("Add at least one genre to this Browse Row.");
-    return { title, rule: { type: "genres", genres } };
+    return { title, rule: { type: "genres", genres, ...filterFields } };
   }
   if (rule.type === "collection") {
     const collectionId = String(rule.collectionId ?? "");
     if (!collectionIds.has(collectionId)) throw new Error("Choose an available Collection for this Browse Row.");
-    return { title, rule: { type: "collection", collectionId } };
+    return { title, rule: { type: "collection", collectionId, ...filterFields } };
   }
-  return { title, rule: { type: rule.type } };
+  return { title, rule: { type: rule.type, ...filterFields } };
+}
+
+function matchesFilters(game: GameSummary, filters?: BrowseRowFilters): boolean {
+  return !filters || (
+    (!filters.platform || game.platform === filters.platform)
+    && (!filters.genres?.length || game.genres.some((genre) => filters.genres!.includes(genre)))
+    && (!filters.series || game.series === filters.series)
+  );
+}
+
+function validateFilters(value: BrowseRowFilters | undefined): BrowseRowFilters {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose valid Browse Row filters.");
+  const filters: BrowseRowFilters = {};
+  if (value.platform !== undefined) {
+    if (typeof value.platform !== "string" || !Object.hasOwn(platforms, value.platform)) throw new Error("Choose a valid platform.");
+    filters.platform = value.platform;
+  }
+  if (value.genres !== undefined) {
+    if (!Array.isArray(value.genres) || value.genres.some((genre) => typeof genre !== "string" || genre.length > 100)) throw new Error("Choose valid genres.");
+    const genres = [...new Set(value.genres.map((genre) => genre.trim()).filter(Boolean))];
+    if (genres.length > 12) throw new Error("Choose up to 12 genres.");
+    if (genres.length) filters.genres = genres;
+  }
+  if (value.series !== undefined) {
+    if (typeof value.series !== "string" || !value.series.trim() || value.series.length > 240) throw new Error("Choose a valid Series.");
+    filters.series = value.series.trim();
+  }
+  return filters;
 }

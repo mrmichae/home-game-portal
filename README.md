@@ -204,6 +204,11 @@ remapping. **Check controllers** reports devices currently visible to the browse
 
 Presentation controls live under **Settings → Administration → Browse & Collections**.
 Collections are reusable groups of selected Games, and every Collection is editable.
+Browse Rows can combine optional Platform, Genre, and Series filters with any content
+source. Games must match every selected criterion; multiple selected genres match
+any of those genres. For example, choose All games, Atari 2600, and Action for an
+Atari action shelf. Series options come from library metadata.
+
 Browse Rows are independent ordered rules: removing a normal row does not remove its
 Collection, while removing a Collection also removes any row that directly depends on
 it. Neither operation changes Game Files, Saves, Favorites, or play history.
