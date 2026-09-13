@@ -21,6 +21,14 @@ so playback does not need the public CDN at runtime.
   CC BY-SA 4.0; code is MIT. The catalog is cached in persistent application data and is
   not distributed in this repository or container image.
 
+- Libretro Database: <https://github.com/libretro/libretro-database>. The application
+  downloads its Atari 2600 No-Intro, release-year, and genre DAT files at runtime for
+  local Metadata Matching. The cached files are not distributed in this repository or image.
+- OpenVGDB 29.0: <https://github.com/OpenVGDB/OpenVGDB/releases/tag/v29.0>. The application
+  downloads its public database release at runtime to supplement Atari 2600 titles with
+  release dates, genres, and descriptions. The cached database is not distributed in this
+  repository or container image.
+
 Vendored asset SHA-256 checksums:
 
 ```text

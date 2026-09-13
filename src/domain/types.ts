@@ -21,6 +21,7 @@ export interface DiscoveredGameFile {
   displayName: string;
   platform: WebPlayablePlatformKey;
   contentHash: string;
+  contentSha1?: string;
   byteSize: number;
   modifiedAtMs: number;
 }

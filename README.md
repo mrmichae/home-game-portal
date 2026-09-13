@@ -41,7 +41,7 @@ choice is required.
   without deleting Saves, Checkpoints, history, Favorites, or library data.
 - A Featured title that stays stable while a player browses and rotates whenever a
   Player Profile is selected again.
-- Automatic SHA-256 Metadata Matches against a locally cached public NES catalog, with
+- Automatic hash-based Metadata Matches against locally cached NES, SNES, and Atari 2600 catalogs, with
   administrator corrections that survive rescans and a persistent same-origin artwork cache.
 - An **Administration** area that keeps Metadata Management intact and displays
   platform-level Emulator Profiles for NES, SNES, and Atari 2600.
@@ -216,9 +216,10 @@ before the catalog renders again.
 The portal never writes to, renames, deletes, or sends a source game to an external
 service. The browser downloads game bytes from this portal because emulation runs in
 the browser. For NES and SNES enrichment, the server downloads the public Retronian
-catalogs to `DATA_DIR/metadata` and performs hash comparisons locally; Atari 2600 games
-use filename metadata until corrected by an administrator. ROM bytes, filenames, and
-hashes are not uploaded to Retronian, EmulatorJS, or another metadata provider.
+catalogs to `DATA_DIR/metadata`. For Atari 2600 enrichment, it downloads Libretro's public
+No-Intro, release-year, and genre catalogs plus the OpenVGDB metadata supplement to the
+same cache. Hash and title comparisons happen locally. ROM bytes, filenames, and hashes
+are not uploaded to Retronian, Libretro, OpenVGDB, EmulatorJS, or another metadata provider.
 
 ## Verification
 
@@ -270,8 +271,10 @@ restart, and new files appear after rescan. No ROM is checked into this reposito
   artwork and as enrichment fallback for previously uncurated titles. Administrator
   corrections always take precedence and can be opened from a Game detail page or
   **Settings → Administration → Metadata Management** without modifying a Game File.
-  Atari 2600 titles use platform-correct filename defaults and artwork lookup until a
-  dedicated metadata provider or an administrator correction supplies richer details.
+  Atari 2600 files are SHA-1 matched locally against Libretro's No-Intro catalog, with
+  unambiguous normalized titles as a fallback. Libretro and OpenVGDB supply canonical
+  titles, release years, genres, descriptions, and box-art names. Administrator
+  corrections continue to take precedence.
 - Collections and Browse Rows are household-wide administrator configuration.
   Personal row content such as Continue Playing, Favorites, and Recently Played is
   resolved separately for the active Player Profile; empty rows remain hidden.
@@ -282,6 +285,9 @@ restart, and new files appear after rescan. No ROM is checked into this reposito
 - Artwork is fetched from its configured HTTPS source on first request and cached in
   `ARTWORK_DIR`. If a cache fetch fails, the endpoint temporarily redirects to the
   source, so uncached art can still require internet access.
+- The first Atari scan downloads Libretro catalogs and OpenVGDB's roughly 9 MB compressed
+  database, which occupies roughly 42 MB after extraction in `DATA_DIR/metadata`.
+  Later scans reuse the cached files; unavailable providers fall back to local metadata.
 - The first scan for each Nintendo platform downloads its Retronian catalog and caches it
   in `DATA_DIR/metadata`. If that download is unavailable, scanning still succeeds with the
   local fallback; a later rescan retries. Archive scanning and firmware handling remain
@@ -356,7 +362,7 @@ The `/artwork` volume is now implemented for the persistent artwork cache. `/fir
 remains omitted because the supported browser cores do not require it.
 
 The original no-metadata-provider constraint was intentionally superseded by later
-product iterations. Retronian metadata is downloaded and cached server-side, matching
+product iterations. Retronian, Libretro, and OpenVGDB metadata is downloaded and cached server-side, matching
 occurs locally, and reviewed HTTPS artwork is cached on first access. This keeps Game
 Files and their identifiers private while making newly discovered titles enrichable.
 

@@ -137,7 +137,7 @@ export class CatalogRepository {
     let added = 0;
     const previousGameIds = new Map<string, string>();
     const groupedGameIds = new Set<string>();
-    const matchesByHash = new Map(metadataMatches.map((match) => [match.contentHash, match]));
+    const matchesByHash = new Map(metadataMatches.map((match) => [`${match.platform}\0${match.contentHash}`, match]));
     const matchedGameIds = new Set<string>();
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -178,13 +178,13 @@ export class CatalogRepository {
           file.byteSize,
           file.modifiedAtMs,
         );
-        const metadataMatch = matchesByHash.get(file.contentHash);
+        const metadataMatch = matchesByHash.get(`${platform}\0${file.contentHash}`);
         if (metadataMatch) {
           this.database.prepare(`
             INSERT INTO metadata_matches(
               game_id, provider_key, provider_game_id, display_name, release_year,
               description, genres_json, series_name, cover_url, matched_at
-            ) VALUES (?, 'retronian', ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
               provider_key = excluded.provider_key,
               provider_game_id = excluded.provider_game_id,
@@ -196,7 +196,7 @@ export class CatalogRepository {
               cover_url = excluded.cover_url,
               matched_at = excluded.matched_at
           `).run(
-            gameId, metadataMatch.canonicalId, metadataMatch.displayName, metadataMatch.releaseYear,
+            gameId, metadataMatch.providerKey, metadataMatch.canonicalId, metadataMatch.displayName, metadataMatch.releaseYear,
             metadataMatch.description, JSON.stringify(metadataMatch.genres), metadataMatch.series,
             metadataMatch.coverUrl, now,
           );
