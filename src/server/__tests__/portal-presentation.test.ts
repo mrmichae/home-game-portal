@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DiscoveredGameFile } from "../../domain/types.js";
+import type { BrowseRowFilters, DiscoveredGameFile, GameSummary } from "../../domain/types.js";
 import { CatalogRepository } from "../catalog-repository.js";
 import { openMemoryDatabase } from "../database.js";
 import { PortalPresentation } from "../portal-presentation.js";
@@ -59,6 +59,54 @@ describe("Portal Presentation module interface", () => {
 
     presentation.deleteCollection(initial!.id);
     expect(presentation.catalog(games).collections.some((collection) => collection.id === initial!.id)).toBe(false);
+    database.close();
+  });
+
+  it("persists intersecting platform, genre, and Series filters and allows clearing them", () => {
+    const database = openMemoryDatabase(migrationsDir);
+    const catalogGames = seededCatalog(database).listGames();
+    new PortalPresentation(database).catalog(catalogGames);
+    const base = catalogGames[0];
+    const games: GameSummary[] = [
+      { ...base, id: "match", platform: "atari2600", genres: ["Action"], series: "Adventure", isFavorite: true },
+      { ...base, id: "other-platform", platform: "nes", genres: ["Action"], series: "Adventure", isFavorite: true },
+      { ...base, id: "other-genre", platform: "atari2600", genres: ["Puzzle"], series: "Adventure", isFavorite: true },
+      { ...base, id: "other-series", platform: "atari2600", genres: ["Action"], series: null, isFavorite: true },
+      { ...base, id: "not-favorite", platform: "atari2600", genres: ["Action"], series: "Adventure", isFavorite: false },
+    ];
+    let presentation = new PortalPresentation(database);
+    const row = presentation.createBrowseRow({ title: "Atari action", rule: { type: "all", filters: { platform: "atari2600", genres: ["Action"] } } }, new Set());
+    presentation = new PortalPresentation(database);
+    const resolved = () => presentation.catalog(games).browseRows.find((item) => item.id === row.id)!;
+    expect(resolved().games.map((game) => game.id)).toEqual(["match", "other-series", "not-favorite"]);
+    const filters: BrowseRowFilters = { platform: "atari2600", genres: ["Action", "Platformer"], series: "Adventure" };
+    presentation.updateBrowseRow(row.id, { title: row.title, rule: { type: "favorites", filters } }, new Set());
+    expect(resolved().rule).toEqual({ type: "favorites", filters });
+    expect(resolved().games.map((game) => game.id)).toEqual(["match"]);
+    presentation.updateBrowseRow(row.id, { title: row.title, rule: { type: "all", filters: { series: "Adventure" } } }, new Set());
+    expect(resolved().games.map((game) => game.id)).toEqual(["match", "other-platform", "other-genre", "not-favorite"]);
+    presentation.updateBrowseRow(row.id, { title: row.title, rule: { type: "all" } }, new Set());
+    expect(resolved().games).toHaveLength(5);
+    expect(resolved().rule).toEqual({ type: "all" });
+    database.close();
+  });
+
+  it("filters Collection sources and preserves deletion of their rows", () => {
+    const database = openMemoryDatabase(migrationsDir);
+    const games = seededCatalog(database).listGames();
+    const presentation = new PortalPresentation(database);
+    const collection = presentation.createCollection({ name: "One game", description: "Chosen game", gameIds: [games[0].id] }, games);
+    const row = presentation.createBrowseRow({ title: "NES", rule: { type: "collection", collectionId: collection.id, filters: { platform: "nes" } } }, new Set([collection.id]));
+    expect(presentation.catalog(games).browseRows.find((item) => item.id === row.id)?.games.map((game) => game.id)).toEqual([games[0].id]);
+    presentation.deleteCollection(collection.id);
+    expect(presentation.catalog(games).browseRows.some((item) => item.id === row.id)).toBe(false);
+    database.close();
+  });
+
+  it.each([null, [], { platform: "invalid" }, { platform: "toString" }, { genres: "Action" }, { genres: [42] }, { series: " " }])("rejects malformed filters: %j", (filters) => {
+    const database = openMemoryDatabase(migrationsDir);
+    const presentation = new PortalPresentation(database);
+    expect(() => presentation.createBrowseRow({ title: "Invalid", rule: { type: "all", filters: filters as unknown as BrowseRowFilters } }, new Set())).toThrow();
     database.close();
   });
 
