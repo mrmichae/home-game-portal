@@ -264,6 +264,10 @@ restart, and new files appear after rescan. No ROM is checked into this reposito
 - Controller presets configure documented EmulatorJS defaults before startup. A browser
   may expose a particular Joy-Con orientation or third-party controller differently, so
   its built-in Control Settings screen is the fallback for unusual mappings.
+- Mobile startup honors the Virtual Gamepad setting without requiring a toggle.
+  Gameplay taps resume suspended browser audio, including after an interruption;
+  volume and mute settings remain under the player's control. Audio may require
+  the first tap after the game finishes loading.
 - The Apple TV Remote preset can supply directional and action keys only where a browser
   or TV WebView exposes remote presses as keyboard-like events. A normal Safari page
   cannot make the remote appear as a standard web Gamepad.

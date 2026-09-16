@@ -79,6 +79,18 @@ cross-origin-isolated context.
 The vendored loader also contains one compatibility line that registers EmulatorJS's
 documented `EJS_onExit` callback; the 4.2.3 loader omitted that event binding.
 
+The vendored `emulator.min.js` has two UI-only mobile startup patches:
+
+- `startGame()` sets gamepad visibility from the resolved `virtual-gamepad` setting
+  instead of `this.touch`, which automatic startup never sets through the Start button.
+- `handleResize()` no longer temporarily reveals a hidden gamepad and schedules it
+  to be hidden 250 ms later. That stale timer could hide an enabled gamepad after
+  startup or a settings change. Parent measurement and responsive classes remain.
+
+`src/client/playback/mobile-startup.test.ts` executes the bundled methods to protect
+these patches when replacing upstream assets. The adapter versions this UI bundle
+through `EJS_paths`; core binaries and Checkpoint compatibility are unchanged.
+
 Box-art URLs point to the public
 platform repositories in [`libretro-thumbnails`](https://github.com/libretro-thumbnails).
 Artwork remains hosted by that project and is not copied into this application.
