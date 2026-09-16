@@ -3,6 +3,8 @@ import { ResumeCoordinator, type RestoreResult, type ResumableGameManager } from
 
 type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
 const emulatorJsAssetVersion = WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion;
+// UI-only patches must invalidate the bundle cache without invalidating checkpoints.
+const emulatorJsUiVersion = `${emulatorJsAssetVersion}-mobile.1`;
 
 export interface PlaybackCallbacks {
   onReady: () => void;
@@ -31,6 +33,7 @@ interface EmulatorWindow extends Window {
   EJS_gameName?: string;
   EJS_gameID?: number;
   EJS_pathtodata?: string;
+  EJS_paths?: Record<string, string>;
   EJS_startOnLoaded?: boolean;
   EJS_fullscreenOnLoaded?: boolean;
   EJS_threads?: boolean;
@@ -52,6 +55,7 @@ interface EmulatorWindow extends Window {
   EJS_onSaveState?: unknown;
   EJS_onExit?: () => void;
   EJS_emulator?: {
+    Module?: { AL?: { currentCtx?: { audioCtx?: { state: string; resume: () => Promise<void> } } } };
     callEvent?: (event: string) => void;
     gameManager?: EmulatorGameManager;
     paused?: boolean;
@@ -262,6 +266,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_gameName = emulatorGameName(manifest.gameName, manifest.platform);
     host.EJS_gameID = Number.parseInt(manifest.gameId.slice(0, 8), 16);
     host.EJS_pathtodata = "/emulatorjs/";
+    host.EJS_paths = { "emulator.min.js": `/emulatorjs/emulator.min.js?v=${emulatorJsUiVersion}` };
     host.EJS_startOnLoaded = true;
     host.EJS_fullscreenOnLoaded = false;
     host.EJS_threads = runtimeProfile.threaded;
@@ -340,6 +345,25 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     window.addEventListener("error", onWindowError);
     window.addEventListener("unhandledrejection", onUnhandledRejection);
 
+    // The core's one-shot touchstart listener cannot recover later interruptions
+    // or browsers that grant touch activation only on release. Resolve the live
+    // context on every gesture: it does not exist while the core is downloading.
+    const gameElement = document.querySelector<HTMLElement>("#game");
+    const resumeAudio = () => {
+      const audio = host.EJS_emulator?.Module?.AL?.currentCtx?.audioCtx;
+      if (!audio || (audio.state !== "suspended" && audio.state !== "interrupted")) return;
+      try {
+        // Keep this call synchronous inside the gesture. A rejected attempt must
+        // leave later gestures able to retry, without changing volume or mute.
+        void audio.resume().catch(() => {});
+      } catch {
+        // A context can be closed during runtime teardown; retry on later input.
+      }
+    };
+    const audioGestures = ["pointerdown", "pointerup", "touchend", "click", "keydown"];
+    for (const event of audioGestures) gameElement?.addEventListener(event, resumeAudio, { capture: true, passive: true });
+
+
     const runtimeScript = document.createElement("script");
     runtimeScript.src = `${runtimeProfile.scriptPath}?v=${emulatorJsAssetVersion}`;
     runtimeScript.dataset.ejsRuntime = "true";
@@ -392,6 +416,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       window.clearTimeout(timeout);
       window.removeEventListener("error", onWindowError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      for (const event of audioGestures) gameElement?.removeEventListener(event, resumeAudio, { capture: true });
       exitCoordinator.teardown(host.EJS_emulator);
       if (wrappedRuntime && host.EJS_Runtime === wrappedRuntime) delete host.EJS_Runtime;
       if (gameFileUrl) URL.revokeObjectURL(gameFileUrl);
