@@ -30,4 +30,13 @@ describe("NES catalog metadata", () => {
     expect(metadataForGame("The Legend of Zelda", "nes/Legend of Zelda, The (USA).nes").description)
       .toBe("Explore Hyrule at your own pace, uncover hidden dungeons, and assemble the Triforce of Wisdom.");
   });
+
+  it("uses Atari 2600 defaults and its platform artwork repository", () => {
+    expect(metadataForGame("Adventure", "Atari 2600/Adventure (USA).a26", "atari2600")).toMatchObject({
+      releaseYear: 1977,
+      genres: ["Atari 2600"],
+      coverUrl: expect.stringContaining("libretro-thumbnails/Atari_-_2600"),
+    });
+    expect(hasCuratedMetadata("Adventure", "atari2600")).toBe(false);
+  });
 });

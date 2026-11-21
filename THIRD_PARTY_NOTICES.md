@@ -16,9 +16,18 @@ so playback does not need the public CDN at runtime.
   Source: <https://github.com/libretro/stella2014-libretro>.
   License: `THIRD_PARTY_LICENSES/Stella2014-GPL-2.0.txt`.
 - Retronian GameDB: <https://github.com/retronian/retronian-gamedb>. The application
-  downloads its Famicom/NES JSON catalog at runtime for local Metadata Matching. Data is
+  downloads its Famicom/NES and Super Famicom/SNES JSON catalogs at runtime for local
+  Metadata Matching. Data is
   CC BY-SA 4.0; code is MIT. The catalog is cached in persistent application data and is
   not distributed in this repository or container image.
+- Libretro Database: <https://github.com/libretro/libretro-database>. The application
+  downloads its Atari 2600 No-Intro, release-year, and genre DAT files at runtime for
+  local Metadata Matching. The cached files are not distributed in this repository or image.
+- OpenVGDB 29.0: <https://github.com/OpenVGDB/OpenVGDB/releases/tag/v29.0>. The application
+  downloads its public database release at runtime to supplement Atari 2600 titles with
+  release dates, genres, and descriptions. The cached database is not distributed in this
+  repository or container image.
+
 - Libretro Database: <https://github.com/libretro/libretro-database>. The application
   downloads its Atari 2600 No-Intro, release-year, and genre DAT files at runtime for
   local Metadata Matching. The cached files are not distributed in this repository or image.
@@ -59,8 +68,8 @@ c9920b95db48f678294daa72a289c19846e74ba69ca6d6094a76fb9f560fb39a  public/emulato
 2c26366dc411d7bb92123a7ef4518b05db01be72761a59037d6f206112204d9f  public/emulatorjs/cores/stella2014-thread-wasm.upstream.7z
 868eebd75e539f44c4941c461912aa64bb61fd448a4f266a4197da2228b03615  public/emulatorjs/cores/stella2014_thread_libretro.js
 4199be47c4560a298911c432f88ebed1dd1a68ed0d9cc5a8ea4403c79f6056ea  public/emulatorjs/cores/stella2014_thread_libretro.wasm
-a6996dcf0c334281f734560926e079b2dbbd5b78e81c0ca00a413ec01e1cd2fb  THIRD_PARTY_LICENSES/Stella2014-GPL-2.0.txt
 70efeee282d82a6e9d26aeed5466d08c632369858371dc6a4644c8dcedc2be78  THIRD_PARTY_LICENSES/Snes9x-License.txt
+a6996dcf0c334281f734560926e079b2dbbd5b78e81c0ca00a413ec01e1cd2fb  THIRD_PARTY_LICENSES/Stella2014-GPL-2.0.txt
 ```
 
 No game, firmware, metadata, or artwork files are included.
@@ -89,5 +98,6 @@ The vendored `emulator.min.js` has two UI-only mobile startup patches:
 these patches when replacing upstream assets. The adapter versions this UI bundle
 through `EJS_paths`; core binaries and Checkpoint compatibility are unchanged.
 
-Box-art URLs point to the platform-specific public `libretro-thumbnails` repositories.
+Box-art URLs point to the public
+platform repositories in [`libretro-thumbnails`](https://github.com/libretro-thumbnails).
 Artwork remains hosted by that project and is not copied into this application.

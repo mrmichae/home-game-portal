@@ -2,10 +2,16 @@ import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { inflateRawSync } from "node:zlib";
-import type { DiscoveredGameFile, PlatformKey } from "../domain/types.js";
+import { platforms } from "../domain/platforms.js";
+import type { DiscoveredGameFile, PlatformKey, WebPlayablePlatformKey } from "../domain/types.js";
 import { normalizeGameFilename } from "./filename-normalizer.js";
 
-const CATALOG_URL = "https://gamedb.retronian.com/api/v1/fc.json";
+type MetadataPlatformKey = Exclude<WebPlayablePlatformKey, "atari2600">;
+
+const CATALOGS: Record<MetadataPlatformKey, { url: string; cacheName: string }> = {
+  nes: { url: "https://gamedb.retronian.com/api/v1/fc.json", cacheName: "retronian-fc.json" },
+  snes: { url: "https://gamedb.retronian.com/api/v1/sfc.json", cacheName: "retronian-sfc.json" },
+};
 const LIBRETRO_ROOT = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat";
 const ATARI_CATALOGS = {
   identity: `${LIBRETRO_ROOT}/no-intro/Atari%20-%202600.dat`,
@@ -14,6 +20,7 @@ const ATARI_CATALOGS = {
 } as const;
 const OPENVGDB_URL = "https://github.com/OpenVGDB/OpenVGDB/releases/download/v29.0/openvgdb.zip";
 const MAX_CATALOG_BYTES = 16 * 1024 * 1024;
+
 const MAX_OPENVGDB_BYTES = 64 * 1024 * 1024;
 
 export interface MetadataMatch {
@@ -93,12 +100,17 @@ export class RetronianMetadataProvider {
   ) {}
 
   async match(files: DiscoveredGameFile[]): Promise<MetadataMatch[]> {
-    // This provider is the Famicom/NES catalog. Other platforms retain filename
-    // metadata (or administrator corrections) until a platform-specific
-    // provider is introduced; they must never receive a same-named NES match.
-    const nesFiles = files.filter((file) => file.platform === "nes");
-    if (!nesFiles.length) return [];
-    const entries = await this.loadCatalog();
+    const requestedPlatforms = (["nes", "snes"] as const).filter((platform) =>
+      files.some((file) => file.platform === platform),
+    );
+    const matches = await Promise.all(requestedPlatforms.map((platform) =>
+      this.matchPlatform(files.filter((file) => file.platform === platform), platform),
+    ));
+    return matches.flat();
+  }
+
+  private async matchPlatform(files: DiscoveredGameFile[], platform: MetadataPlatformKey): Promise<MetadataMatch[]> {
+    const entries = await this.loadCatalog(platform);
     const byHash = new Map<string, { entry: RetronianEntry; region?: string }>();
     const byTitle = new Map<string, { entry: RetronianEntry; region?: string } | null>();
     for (const entry of entries) {
@@ -110,15 +122,16 @@ export class RetronianMetadataProvider {
         if (title.lang === "en") addUnambiguousTitle(byTitle, metadataTitleKey(title.text), { entry, region: title.region });
       }
     }
-    return nesFiles.flatMap((file) => {
+    return files.flatMap((file) => {
       const found = byHash.get(file.contentHash.toLocaleLowerCase("en-US"))
         ?? byTitle.get(metadataTitleKey(file.displayName));
-      return found ? [toMetadataMatch(file.contentHash, found.entry, found.region, file.displayName)] : [];
+      return found ? [toMetadataMatch(file.contentHash, found.entry, found.region, file.displayName, platform)] : [];
     });
   }
 
-  private async loadCatalog(): Promise<RetronianEntry[]> {
-    const cachePath = path.join(this.cacheRoot, "retronian-fc.json");
+  private async loadCatalog(platform: MetadataPlatformKey): Promise<RetronianEntry[]> {
+    const catalog = CATALOGS[platform];
+    const cachePath = path.join(this.cacheRoot, catalog.cacheName);
     try {
       return parseCatalog(await readFile(cachePath, "utf8"));
     } catch (error) {
@@ -129,7 +142,7 @@ export class RetronianMetadataProvider {
       }
     }
 
-    const response = await this.fetcher(CATALOG_URL, {
+    const response = await this.fetcher(catalog.url, {
       method: "GET",
       headers: { Accept: "application/json", "User-Agent": "Home-Game-Portal/0.1" },
       signal: AbortSignal.timeout(30_000),
@@ -187,7 +200,7 @@ export class Atari2600MetadataProvider implements MetadataProvider {
       const displayName = supplemental?.title?.trim() || atariDisplayName(found.name);
       const matchedGenres = genresFromOpenVgdb(supplemental?.genre) ?? [readableAtariGenre(String(found.genre ?? genres.get(found.crc) ?? "Atari 2600"))];
       const description = supplemental?.description?.trim()
-        ? conciseDescription(supplemental.description, displayName)
+        ? conciseDescription(supplemental.description, displayName, "Atari 2600")
         : `${displayName} is a ${matchedGenres[0]} game released for Atari 2600${releaseYear === 1977 ? "" : ` in ${releaseYear}`}.`;
       return [{
         providerKey: "libretro" as const,
@@ -423,7 +436,7 @@ function parseCatalog(value: string): RetronianEntry[] {
   return parsed.filter((entry): entry is RetronianEntry => Boolean(entry) && typeof entry === "object" && typeof (entry as RetronianEntry).id === "string");
 }
 
-function toMetadataMatch(contentHash: string, entry: RetronianEntry, matchedRegion: string | undefined, fallbackDisplayName: string): MetadataMatch {
+function toMetadataMatch(contentHash: string, entry: RetronianEntry, matchedRegion: string | undefined, fallbackDisplayName: string, platform: MetadataPlatformKey): MetadataMatch {
   const englishTitles = (entry.titles ?? []).filter((title) => title.lang === "en");
   const providerDisplayName = englishTitles.find((title) => title.region === matchedRegion)?.text
     ?? englishTitles.find((title) => title.region === "us")?.text
@@ -436,21 +449,22 @@ function toMetadataMatch(contentHash: string, entry: RetronianEntry, matchedRegi
   const rawDescription = descriptions.find((description) => description.source === "wikipedia_en")?.text
     ?? descriptions.sort((left, right) => right.text.length - left.text.length)[0]?.text
     ?? "";
-  const description = conciseDescription(rawDescription, displayName);
-  const releaseYear = yearFrom(entry.first_release_date) ?? yearFrom(rawDescription) ?? 1985;
-  const genres = entry.genres?.length ? entry.genres.map(readableGenre) : inferGenres(`${displayName} ${rawDescription}`);
+  const platformName = platforms[platform].displayName;
+  const description = conciseDescription(rawDescription, displayName, platformName);
+  const releaseYear = yearFrom(entry.first_release_date) ?? yearFrom(rawDescription) ?? (platform === "snes" ? 1991 : 1985);
+  const genres = entry.genres?.length ? entry.genres.map(readableGenre) : inferGenres(`${displayName} ${rawDescription}`, platformName);
   const boxArt = (entry.media ?? []).filter((media) => media.kind === "boxart" && media.url.startsWith("https://"));
   const coverUrl = boxArt.find((media) => media.region === matchedRegion)?.url
     ?? boxArt.find((media) => media.region === "us")?.url
     ?? boxArt.find((media) => media.region === "eu")?.url
     ?? boxArt[0]?.url
     ?? null;
-  return { providerKey: "retronian", platform: "nes", contentHash, canonicalId: entry.id, displayName, releaseYear, description, genres, series: inferSeries(displayName), coverUrl };
+  return { providerKey: "retronian", platform, contentHash, canonicalId: entry.id, displayName, releaseYear, description, genres, series: inferSeries(displayName), coverUrl };
 }
 
-function conciseDescription(value: string, displayName: string): string {
+function conciseDescription(value: string, displayName: string, platformName: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) return `${displayName} is a Nintendo Entertainment System game in your private library.`;
+  if (!normalized) return `${displayName} is a ${platformName} game in your private library.`;
   const sentences = normalized.match(/[^.!?]+[.!?]+/g)?.slice(0, 2).join(" ").trim() ?? normalized;
   return sentences.length <= 420 ? sentences : `${sentences.slice(0, 417).trimEnd()}…`;
 }
@@ -460,7 +474,7 @@ function yearFrom(value?: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function inferGenres(value: string): string[] {
+function inferGenres(value: string, platformName: string): string[] {
   const rules: Array<[RegExp, string]> = [
     [/role-playing|\brpg\b/i, "RPG"],
     [/platform/i, "Platformer"],
@@ -474,7 +488,7 @@ function inferGenres(value: string): string[] {
     [/fighting game|one-on-one fight/i, "Fighting"],
   ];
   const genres = rules.filter(([pattern]) => pattern.test(value)).map(([, genre]) => genre).slice(0, 4);
-  return genres.length ? genres : ["Nintendo Entertainment System"];
+  return genres.length ? genres : [platformName];
 }
 
 function readableGenre(value: string): string {

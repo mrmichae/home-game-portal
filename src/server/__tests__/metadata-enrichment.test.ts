@@ -98,23 +98,76 @@ describe("automatic Metadata Match enrichment", () => {
     ]);
   });
 
-  it("does not apply the NES catalog to same-named SNES or Atari 2600 titles", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify([fixtureMetadata()]))) as typeof fetch;
-    const provider = new RetronianMetadataProvider(path.join(os.tmpdir(), "unused-snes-metadata"), fetcher);
+  it("downloads and applies SNES metadata instead of leaving placeholder details", async () => {
+    const cacheRoot = await mkdtemp(path.join(os.tmpdir(), "portal-snes-metadata-"));
+    temporaryDirectories.push(cacheRoot);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify([fixtureSnesMetadata()]))) as typeof fetch;
+    const provider = new RetronianMetadataProvider(cacheRoot, fetcher);
 
     await expect(provider.match([{
-      relativePath: "SNES/Castlevania.sfc",
-      displayName: "Castlevania",
+      relativePath: "SNES/Super Mario World (USA).sfc",
+      displayName: "Super Mario World",
       platform: "snes",
-      contentHash: "abc123",
+      contentHash: "snes123",
       byteSize: 1,
       modifiedAtMs: 1,
-    }, {
-      relativePath: "Atari 2600/Castlevania.a26",
-      displayName: "Castlevania",
-      platform: "atari2600",
-      contentHash: "def456",
+    }])).resolves.toEqual([
+      expect.objectContaining({
+        contentHash: "snes123",
+        canonicalId: "super-mario-world",
+        description: "Mario and Luigi travel through Dinosaur Land to rescue Princess Toadstool.",
+        genres: expect.arrayContaining(["Platformer"]),
+      }),
+    ]);
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/v1/sfc.json"), expect.objectContaining({ method: "GET" }));
+  });
+
+  it("stores an SNES match and presents its enriched details", () => {
+    const database = openMemoryDatabase(path.resolve(process.cwd(), "migrations"));
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource("/roms");
+    const file: DiscoveredGameFile = {
+      relativePath: "SNES/Super Mario World (USA).sfc",
+      displayName: "Super Mario World",
+      platform: "snes",
+      contentHash: "snes123",
       byteSize: 1,
+      modifiedAtMs: 1,
+    };
+    const match = {
+      providerKey: "retronian" as const, platform: "snes" as const,
+      contentHash: "snes123",
+      canonicalId: "super-mario-world",
+      displayName: "Super Mario World",
+      releaseYear: 1990,
+      description: "Mario and Luigi travel through Dinosaur Land to rescue Princess Toadstool.",
+      genres: ["Platformer"],
+      series: "Super Mario World",
+      coverUrl: "https://example.test/Super%20Mario%20World.png",
+    };
+
+    catalog.commitScan([file], new Date("2026-09-07T12:00:00.000Z"), [match]);
+
+    expect(catalog.listGames()[0]).toMatchObject({
+      platform: "snes",
+      releaseYear: 1990,
+      description: "Mario and Luigi travel through Dinosaur Land to rescue Princess Toadstool.",
+      genres: ["Platformer"],
+      metadataStatus: "matched",
+    });
+    database.close();
+  });
+
+  it("leaves Atari 2600 files on filename metadata without requesting another platform catalog", async () => {
+    const fetcher = vi.fn(async () => new Response("[]")) as typeof fetch;
+    const provider = new RetronianMetadataProvider(path.join(os.tmpdir(), "unused-atari-metadata"), fetcher);
+
+    await expect(provider.match([{
+      relativePath: "Atari 2600/Adventure.a26",
+      displayName: "Adventure",
+      platform: "atari2600",
+      contentHash: "atari123",
+      byteSize: 4_096,
       modifiedAtMs: 1,
     }])).resolves.toEqual([]);
     expect(fetcher).not.toHaveBeenCalled();
@@ -217,6 +270,19 @@ function fixtureMetadata() {
     descriptions: [{ text: "Castlevania is an action-adventure platform game released for the Nintendo Entertainment System.", lang: "en", source: "wikipedia_en" }],
     roms: [{ name: "Castlevania (USA)", region: "us", sha256: "abc123" }],
     media: [{ kind: "boxart", region: "us", url: "https://example.test/Castlevania%20%28USA%29.png" }],
+  };
+}
+
+function fixtureSnesMetadata() {
+  return {
+    id: "super-mario-world",
+    platform: "sfc",
+    titles: [{ text: "Super Mario World", lang: "en", region: "us" }],
+    first_release_date: "1990-11-21",
+    descriptions: [{ text: "Mario and Luigi travel through Dinosaur Land to rescue Princess Toadstool.", lang: "en", source: "wikipedia_en" }],
+    genres: ["platformer"],
+    roms: [{ name: "Super Mario World (USA)", region: "us", sha256: "snes123" }],
+    media: [{ kind: "boxart", region: "us", url: "https://example.test/Super%20Mario%20World%20%28USA%29.png" }],
   };
 }
 

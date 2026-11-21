@@ -13,7 +13,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe("multi-platform catalog migrations", () => {
+describe("SNES catalog migration", () => {
   it("widens the Edition platform constraint without losing an existing NES catalog", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "portal-snes-migration-"));
     temporaryDirectories.push(root);
@@ -41,7 +41,7 @@ describe("multi-platform catalog migrations", () => {
     upgradedCatalog.commitScan([
       { relativePath: "NES/Example.nes", displayName: "Example", platform: "nes", contentHash: "nes-hash", byteSize: 1, modifiedAtMs: 1 },
       { relativePath: "SNES/Example.sfc", displayName: "Example", platform: "snes", contentHash: "snes-hash", byteSize: 2, modifiedAtMs: 2 },
-      { relativePath: "Atari 2600/Example.a26", displayName: "Example", platform: "atari2600", contentHash: "atari-hash", byteSize: 3, modifiedAtMs: 3 },
+      { relativePath: "Atari 2600/Example.a26", displayName: "Example", platform: "atari2600", contentHash: "atari-hash", byteSize: 4_096, modifiedAtMs: 3 },
     ]);
     expect(upgradedCatalog.listGames()).toHaveLength(3);
     expect(upgradedDatabase.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

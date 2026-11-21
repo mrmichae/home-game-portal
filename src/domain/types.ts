@@ -197,7 +197,10 @@ export const WEB_CHECKPOINT_COMPATIBILITY = {
   formatKey: "fceumm:emulatorjs-4.2.3-core:state-v1:default-options",
   adapterKey: "emulatorjs",
   coreKey: "fceumm",
-  runtimeVersion: "4.2.3-portal.2",
+  // portal.2 checkpoints may have been promoted after only one advancing
+  // frame, then re-captured from a stalled runtime. Keep those immutable rows
+  // for rollback/inspection, but never advertise them to the corrected player.
+  runtimeVersion: "4.2.3-portal.3",
 } as const;
 
 export const SNES_WEB_CHECKPOINT_COMPATIBILITY = {
@@ -226,7 +229,6 @@ export const NATIVE_CHECKPOINT_COMPATIBILITY = {
   coreKey: "fceumm",
   runtimeVersion: "source-pin-pending",
 } as const;
-
 export interface CheckpointCompatibility {
   /** Stable wire/storage identity. Older callers may omit it. */
   formatKey?: string;

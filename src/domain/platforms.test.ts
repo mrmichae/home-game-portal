@@ -11,7 +11,7 @@ describe("platform artwork orientation", () => {
     expect(artworkOrientation("atari2600")).toBe("portrait");
   });
 
-  it("exposes Atari 2600 as a browser-playable Platform", () => {
-    expect(webPlayablePlatforms).toContain("atari2600");
+  it("offers browser playback for every supported platform", () => {
+    expect(webPlayablePlatforms).toEqual(["nes", "snes", "atari2600"]);
   });
 });

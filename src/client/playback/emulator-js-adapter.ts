@@ -60,6 +60,7 @@ interface EmulatorWindow extends Window {
     gameManager?: EmulatorGameManager;
     pause?: () => void;
     play?: () => void;
+    paused?: boolean;
   };
   EJS_Runtime?: (options?: RuntimeOptions) => unknown;
 }
@@ -157,6 +158,19 @@ interface CheckpointGatedStartOptions {
  */
 export function disableImplicitCoreRestart(host: { EJS_softLoad?: number }): void {
   host.EJS_softLoad = 0;
+}
+
+/**
+ * EmulatorJS treats every string as a startup-state URL, including an empty
+ * string. Remove the global entirely so it cannot fetch the player document
+ * and pass those bytes to a core as a save state.
+ */
+export function disableImplicitStartupState(host: { EJS_loadStateURL?: string }): void {
+  delete host.EJS_loadStateURL;
+}
+
+export function emulatorGameName(gameName: string, platform: PlatformKey): string {
+  return platform === "atari2600" ? `${gameName}.a26` : gameName;
 }
 
 export function isBenignRuntimeRejection(reason: unknown): boolean {
@@ -272,7 +286,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     // A browser-local object URL gives the runtime a stable, already-validated file.
     host.EJS_gameUrl = "";
     host.EJS_core = manifest.playbackProfile.core;
-    host.EJS_gameName = manifest.gameName;
+    // Blob URL fragments are discarded by EmulatorJS when it derives the
+    // content filename. Stella needs a cartridge extension for reliable ROM
+    // detection, so preserve one in the internal game name instead.
+    host.EJS_gameName = emulatorGameName(manifest.gameName, manifest.platform);
     host.EJS_gameID = Number.parseInt(manifest.gameId.slice(0, 8), 16);
     host.EJS_pathtodata = "/emulatorjs/";
     host.EJS_paths = { "emulator.min.js": `/emulatorjs/emulator.min.js?v=${emulatorJsUiVersion}` };
@@ -287,7 +304,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_startButtonName = `Start ${manifest.gameName}`;
     // EmulatorJS registers EJS_loadStateURL with a repeatable `start` listener.
     // Own restoration here so a later runtime start event cannot rewind gameplay.
-    host.EJS_loadStateURL = "";
+    disableImplicitStartupState(host);
     host.EJS_defaultOptions = { "save-state-location": "browser" };
     host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset, manifest.platform);
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
@@ -314,7 +331,11 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
           if (!gameManager) throw new Error("The game is not ready to create a checkpoint.");
           callbacks.onSaveStatus("syncing");
           try {
-            await this.resumeCoordinator.capture(manifest.resumePlan, gameManager);
+            await this.resumeCoordinator.capture(
+              manifest.resumePlan,
+              gameManager,
+              () => host.EJS_emulator?.paused === true,
+            );
             callbacks.onSaveStatus("saved");
           } catch (error) {
             callbacks.onSaveStatus("error");

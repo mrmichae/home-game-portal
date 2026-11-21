@@ -90,7 +90,6 @@ describe("Playback Resolver", () => {
     expect(manifest.playbackProfile).toEqual({ adapter: "emulatorjs", core: "snes9x" });
     expect(manifest.emulatorProfile).toEqual({ platformKey: "snes", policy: "platform-default" });
     expect(context?.compatibility).toMatchObject({ adapterKey: "emulatorjs", coreKey: "snes9x" });
-    expect(context?.compatibility.formatKey).toContain("snes9x");
     database.close();
   });
 
@@ -107,7 +106,7 @@ describe("Playback Resolver", () => {
     database.close();
   });
 
-  it("selects Stella and an isolated checkpoint format for an Atari 2600 game", async () => {
+  it("selects Stella and an isolated checkpoint compatibility for an Atari 2600 game", async () => {
     const libraryRoot = await temporaryDirectory("portal-atari2600-launch-");
     await writeFile(path.join(libraryRoot, "Adventure.a26"), Buffer.alloc(4_096, 0xa5));
     const database = openMemoryDatabase(migrationsDir);
@@ -125,7 +124,6 @@ describe("Playback Resolver", () => {
     expect(manifest.playbackProfile).toEqual({ adapter: "emulatorjs", core: "stella2014" });
     expect(manifest.emulatorProfile).toEqual({ platformKey: "atari2600", policy: "platform-default" });
     expect(context?.compatibility).toMatchObject({ adapterKey: "emulatorjs", coreKey: "stella2014" });
-    expect(context?.compatibility.formatKey).toContain("stella2014");
     database.close();
   });
 

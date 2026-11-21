@@ -15,8 +15,9 @@ The approved product and technical requirements for the native tvOS client are i
 ## What works
 
 - Recursive, read-only discovery of NES `.nes`, SNES `.sfc`/`.smc`/`.snes`, and
-  Atari 2600 `.a26` files. Atari `.bin` files are accepted only beneath an
-  Atari/2600-named folder so other platforms are not misclassified.
+  Atari 2600 `.a26` files, with content hashes, platform identity, and filename-based
+  titles. Atari `.bin` files are accepted only beneath an Atari/2600-named folder so
+  other platforms are not misclassified.
   Differently hashed files with the same normalized title are retained as Editions of one Game
   rather than rendered as duplicate Shelf entries.
 - A persistent **Settings → Library** location with server-side directory/readability
@@ -43,7 +44,7 @@ The approved product and technical requirements for the native tvOS client are i
   without deleting Saves, Checkpoints, history, Favorites, or library data.
 - A Featured title that stays stable while a player browses and rotates whenever a
   Player Profile is selected again.
-- Automatic hash-based Metadata Matches against locally cached public NES and Atari 2600 catalogs, with
+- Automatic hash-based Metadata Matches against locally cached NES, SNES, and Atari 2600 catalogs, with
   administrator corrections that survive rescans and a persistent same-origin artwork cache.
 - An **Administration** area that keeps Metadata Management intact and displays
   platform-level Emulator Profiles for NES, SNES, and Atari 2600.
@@ -235,12 +236,11 @@ before the catalog renders again.
 
 The portal never writes to, renames, deletes, or sends a source game to an external
 service. The browser downloads game bytes from this portal because emulation runs in
-the browser. For NES enrichment, the server downloads the public Retronian catalog to
-`DATA_DIR/metadata`. For Atari 2600 enrichment, it downloads Libretro's public No-Intro,
-release-year, and genre catalogs plus the OpenVGDB metadata supplement to the same cache.
-Hash and title comparisons happen locally; SNES games use filename metadata until corrected
-by an administrator. ROM bytes, filenames, and hashes are not uploaded to Retronian,
-Libretro, OpenVGDB, EmulatorJS, or another metadata provider.
+the browser. For NES and SNES enrichment, the server downloads the public Retronian
+catalogs to `DATA_DIR/metadata`. For Atari 2600 enrichment, it downloads Libretro's public
+No-Intro, release-year, and genre catalogs plus the OpenVGDB metadata supplement to the
+same cache. Hash and title comparisons happen locally. ROM bytes, filenames, and hashes
+are not uploaded to Retronian, Libretro, OpenVGDB, EmulatorJS, or another metadata provider.
 
 ## Apple TV development
 
@@ -276,8 +276,8 @@ resolution, default row seeding without title-specific shelves, row ordering val
 and Featured-title selection.
 
 For a real playback check, follow the player flow with legal NES, SNES, and Atari 2600
-files and confirm that all three produce video/input, each saved state survives a browser restart, and
-new files appear after rescan. No ROM is checked into this repository.
+files and confirm that all three produce video/input, each saved state survives a browser
+restart, and new files appear after rescan. No ROM is checked into this repository.
 
 ## Assumptions and known limitations
 
@@ -304,17 +304,17 @@ new files appear after rescan. No ROM is checked into this repository.
   cannot make the remote appear as a standard web Gamepad.
 - The ten profile avatars are an original, generated pixel-art sprite sheet stored with
   the application. They contain no console logos or copyrighted game characters.
-- Filename parsing strips common release/region tags across all three platforms. The original versioned, local NES
-  catalog is the preferred automatic source for its covered titles, using normalized
+- Filename parsing strips common release/region tags across all three platforms. The
+  original versioned, local NES catalog is the preferred automatic source for its covered titles, using normalized
   matching so punctuation and article variants resolve deterministically. On rescan,
   SHA-256 values are also matched locally against the cached Retronian catalog for
   artwork and as enrichment fallback for previously uncurated titles. Administrator
   corrections always take precedence and can be opened from a Game detail page or
   **Settings → Administration → Metadata Management** without modifying a Game File.
-  Atari 2600 files are SHA-1 matched locally against Libretro's current No-Intro catalog;
-  Libretro and OpenVGDB supply canonical titles, release years, genres, descriptions, and
-  canonical box-art names. SNES titles continue to use platform-correct filename defaults
-  and artwork lookup until a dedicated provider or administrator correction supplies richer details.
+  Atari 2600 files are SHA-1 matched locally against Libretro's No-Intro catalog, with
+  unambiguous normalized titles as a fallback. Libretro and OpenVGDB supply canonical
+  titles, release years, genres, descriptions, and box-art names. Administrator
+  corrections continue to take precedence.
 - Collections and Browse Rows are household-wide administrator configuration.
   Personal row content such as Continue Playing, Favorites, and Recently Played is
   resolved separately for the active Player Profile; empty rows remain hidden.
@@ -325,11 +325,13 @@ new files appear after rescan. No ROM is checked into this repository.
 - Artwork is fetched from its configured HTTPS source on first request and cached in
   `ARTWORK_DIR`. If a cache fetch fails, the endpoint temporarily redirects to the
   source, so uncached art can still require internet access.
-- The first scan containing NES files downloads roughly 6 MB from Retronian. The first Atari
-  scan downloads the small Libretro catalogs plus OpenVGDB's roughly 9 MB compressed database.
-  All catalogs are cached in `DATA_DIR/metadata`; OpenVGDB occupies roughly 42 MB after extraction.
-  If a provider is unavailable, scanning still succeeds with the available local fallback and
-  a later rescan retries. Archive scanning and firmware handling remain out of scope.
+- The first Atari scan downloads Libretro catalogs and OpenVGDB's roughly 9 MB compressed
+  database, which occupies roughly 42 MB after extraction in `DATA_DIR/metadata`.
+  Later scans reuse the cached files; unavailable providers fall back to local metadata.
+- The first scan for each Nintendo platform downloads its Retronian catalog and caches it
+  in `DATA_DIR/metadata`. If that download is unavailable, scanning still succeeds with the
+  local fallback; a later rescan retries. Archive scanning and firmware handling remain
+  out of scope.
 - Server persistence covers Checkpoints created by **Leave player**. Leave-time capture
   uses the pinned EmulatorJS runtime's `gameManager.getState()` method behind the
   Playback Adapter; this private compatibility point must be reverified before upgrading
@@ -358,8 +360,8 @@ new files appear after rescan. No ROM is checked into this repository.
   eventually need incremental/background job controls.
 - The built-in Node 22 `node:sqlite` API is used to keep the container small. It emits
   an experimental warning on Node 22 but stores a standard SQLite database.
-- The pinned FCEUmm, Snes9x, and Stella 2014 release files are repackaged from their upstream 7z archives into
-  otherwise identical ZIP. Both compatible and threaded JavaScript/WASM runtimes are
+- The pinned FCEUmm, Snes9x, and Stella 2014 release files are repackaged from their
+  upstream 7z archives into otherwise identical ZIP. Both compatible and threaded JavaScript/WASM runtimes are
   resolved directly by the adapter because the tested browser's archive worker dropped
   the WASM payload. This is an adapter-local compatibility measure; checksums and the
   untouched compatible upstream archive are recorded in `THIRD_PARTY_NOTICES.md`.
@@ -400,9 +402,9 @@ The `/artwork` volume is now implemented for the persistent artwork cache. `/fir
 remains omitted because the supported browser cores do not require it.
 
 The original no-metadata-provider constraint was intentionally superseded by later
-product iterations. Retronian, Libretro, and OpenVGDB metadata is downloaded and cached
-server-side, matching occurs locally, and reviewed HTTPS artwork is cached on first access.
-This keeps Game Files and their identifiers private while making newly discovered titles enrichable.
+product iterations. Retronian, Libretro, and OpenVGDB metadata is downloaded and cached server-side, matching
+occurs locally, and reviewed HTTPS artwork is cached on first access. This keeps Game
+Files and their identifiers private while making newly discovered titles enrichable.
 
 Milestone 2 is complete for the current application: search, Collections, Favorites, Play
 Sessions, selectable Player Profiles, profile-scoped Saves and appearance, administrator

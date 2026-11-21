@@ -6,6 +6,8 @@ import {
   controllerMappingFor,
   createCheckpointGatedStartHandler,
   disableImplicitCoreRestart,
+  disableImplicitStartupState,
+  emulatorGameName,
   fetchGameFile,
   isBenignRuntimeRejection,
   resolveFceummRuntimeFile,
@@ -76,7 +78,7 @@ describe("server Game File preparation", () => {
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes);
   });
 
-  it("accepts an Atari 2600 cartridge image and rejects implausibly small files", async () => {
+  it("accepts a plausible Atari 2600 cartridge image and rejects an implausible one", async () => {
     const bytes = new Uint8Array(4_096).fill(0xa5);
     const file = await fetchGameFile(
       "/api/playback/files/atari-session",
@@ -146,6 +148,20 @@ describe("player lifecycle", () => {
     disableImplicitCoreRestart(host);
 
     expect(host.EJS_softLoad).toBe(0);
+  });
+
+  it("removes an empty startup-state URL instead of letting EmulatorJS load the player document as state", () => {
+    const host = { EJS_loadStateURL: "" };
+
+    disableImplicitStartupState(host);
+
+    expect(host).not.toHaveProperty("EJS_loadStateURL");
+    expect(typeof host.EJS_loadStateURL).not.toBe("string");
+  });
+
+  it("gives Atari blob content a cartridge extension without changing other platform names", () => {
+    expect(emulatorGameName("Ms. Pac-Man", "atari2600")).toBe("Ms. Pac-Man.a26");
+    expect(emulatorGameName("Super Mario Bros.", "nes")).toBe("Super Mario Bros.");
   });
 
   it("does not treat an unavailable screen wake lock as a playback failure", () => {
@@ -232,7 +248,6 @@ describe("runtime selection", () => {
       scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
     });
   });
-
   it("selects the matching Snes9x runtime without changing the isolation policy", () => {
     expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
       threaded: true,
@@ -298,6 +313,32 @@ describe("runtime selection", () => {
     })).toMatchObject({
       threaded: true,
       scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
+    });
+  });
+
+  it("selects the matching Snes9x runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/snes9x_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/snes9x_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_libretro.wasm",
+    });
+  });
+
+  it("selects the matching Stella 2014 runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/stella2014_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/stella2014_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_libretro.wasm",
     });
   });
 });

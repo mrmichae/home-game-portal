@@ -707,9 +707,11 @@ function platformForRelativePath(relativePath: string): PlatformKey {
   if (extension === ".a26") return "atari2600";
   if (extension === ".bin") {
     const directories = relativePath.split(/[\\/]/).slice(0, -1);
-    if (directories.some((directory) => ["atari", "atari2600", "2600", "vcs"].includes(directory.normalize("NFKD").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "")))) {
-      return "atari2600";
-    }
+    const hasAtariDirectory = directories.some((directory) =>
+      ["atari", "atari2600", "2600", "vcs"].includes(
+        directory.normalize("NFKD").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, ""),
+      ));
+    if (hasAtariDirectory) return "atari2600";
   }
   return "nes";
 }
