@@ -22,8 +22,8 @@ describe("Household library persistence", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     catalog.commitScan([
-      { relativePath: "._Beetlejuice.nes", displayName: "Beetlejuice", contentHash: "sidecar", byteSize: 4_096, modifiedAtMs: 2 },
-      { relativePath: "Beetlejuice.nes", displayName: "Beetlejuice", contentHash: "game", byteSize: 131_088, modifiedAtMs: 1 },
+      { relativePath: "._Beetlejuice.nes", displayName: "Beetlejuice", platform: "nes", contentHash: "sidecar", byteSize: 4_096, modifiedAtMs: 2 },
+      { relativePath: "Beetlejuice.nes", displayName: "Beetlejuice", platform: "nes", contentHash: "game", byteSize: 131_088, modifiedAtMs: 1 },
     ]);
 
     const game = catalog.listGames()[0];
@@ -37,8 +37,8 @@ describe("Household library persistence", () => {
     const catalog = new CatalogRepository(database);
     catalog.ensureLibrarySource("/roms");
     const files: DiscoveredGameFile[] = [
-      { relativePath: "Beetlejuice (USA).nes", displayName: "Beetlejuice", contentHash: "hash-one", byteSize: 1, modifiedAtMs: 1 },
-      { relativePath: "Beetlejuice (USA) [Rev A].nes", displayName: "Beetlejuice", contentHash: "hash-two", byteSize: 2, modifiedAtMs: 2 },
+      { relativePath: "Beetlejuice (USA).nes", displayName: "Beetlejuice", platform: "nes", contentHash: "hash-one", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "Beetlejuice (USA) [Rev A].nes", displayName: "Beetlejuice", platform: "nes", contentHash: "hash-two", byteSize: 2, modifiedAtMs: 2 },
     ];
 
     expect(catalog.commitScan(files)).toMatchObject({ discovered: 2, added: 2 });
@@ -64,6 +64,23 @@ describe("Household library persistence", () => {
     }, Buffer.from([1]), 10, new Date("2026-08-21T11:00:00.000Z"));
     expect(catalog.listGames()[0].hasServerSave).toBe(true);
     expect(catalog.getPreferredGameFile(catalog.listGames()[0].id)).toBe(editions[1].relative_path);
+    database.close();
+  });
+
+  it("keeps same-named NES and SNES titles as separate platform Games", () => {
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource("/roms");
+    catalog.commitScan([
+      { relativePath: "NES/Example Game.nes", displayName: "Example Game", platform: "nes", contentHash: "nes-hash", byteSize: 1, modifiedAtMs: 1 },
+      { relativePath: "SNES/Example Game.sfc", displayName: "Example Game", platform: "snes", contentHash: "snes-hash", byteSize: 2, modifiedAtMs: 2 },
+    ]);
+
+    expect(catalog.listGames()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ displayName: "Example Game", platform: "nes" }),
+      expect.objectContaining({ displayName: "Example Game", platform: "snes" }),
+    ]));
+    expect(catalog.listGames()).toHaveLength(2);
     database.close();
   });
 

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import type { BrowseRowDefinition, BrowseRowInput, BrowseRowRule, CollectionDefinition, CollectionInput, GameSummary, PresentationAdministration } from "../../domain/types";
+import type { BrowseRowDefinition, BrowseRowFilters, BrowseRowInput, BrowseRowRule, CollectionDefinition, CollectionInput, GameSummary, PresentationAdministration } from "../../domain/types";
+import { platforms, platformShortName } from "../../domain/platforms";
 import { api } from "../api";
 import { CoverArt, PortalHeader, Spinner } from "../components";
 import { usePlayerProfile } from "../player-profile";
 
 type CollectionDraft = { id: string | null; name: string; description: string; gameIds: string[] };
-type RowDraft = { id: string | null; title: string; type: BrowseRowRule["type"]; value: string };
+type RowDraft = { id: string | null; title: string; type: BrowseRowRule["type"]; value: string; filters: BrowseRowFilters };
 type PendingRemoval = { kind: "collection" | "row"; id: string; name: string };
 
 export function PresentationAdminPage(): React.JSX.Element {
@@ -40,8 +41,8 @@ export function PresentationAdminPage(): React.JSX.Element {
     ? { id: collection.id, name: collection.name, description: collection.description, gameIds: collection.gameIds }
     : { id: null, name: "", description: "", gameIds: [] });
   const editRow = (row?: BrowseRowDefinition) => setRowDraft(row
-    ? { id: row.id, title: row.title, type: row.rule.type, value: rowRuleValue(row.rule) }
-    : { id: null, title: "", type: "all", value: "" });
+    ? { id: row.id, title: row.title, type: row.rule.type, value: rowRuleValue(row.rule), filters: row.rule.filters ?? {} }
+    : { id: null, title: "", type: "all", value: "", filters: {} });
 
   const saveCollection = async (input: CollectionInput) => {
     if (!collectionDraft) return;
@@ -115,7 +116,7 @@ export function PresentationAdminPage(): React.JSX.Element {
       {administration.browseRows.length ? <ol className="browse-row-list">{administration.browseRows.map((row, index) => <li key={row.id}><span className="browse-row-order">{String(index + 1).padStart(2, "0")}</span><div><h3>{row.title}</h3><p>{describeRule(row.rule, administration)}</p></div><div className="browse-row-actions"><button type="button" aria-label={`Move ${row.title} up`} onClick={() => void moveRow(row.id, -1)} disabled={index === 0}>↑</button><button type="button" aria-label={`Move ${row.title} down`} onClick={() => void moveRow(row.id, 1)} disabled={index === administration.browseRows.length - 1}>↓</button><button type="button" onClick={() => editRow(row)}>Edit</button><button className="danger-text" type="button" onClick={() => setPendingRemoval({ kind: "row", id: row.id, name: row.title })}>Remove</button></div></li>)}</ol> : <div className="presentation-empty"><b>Browse has no rows.</b><span>Add a row to give the Browse screen content beneath Featured.</span></div>}
     </section>
     {collectionDraft && <CollectionEditor draft={collectionDraft} games={games} saving={saving} onCancel={() => setCollectionDraft(null)} onSave={saveCollection} />}
-    {rowDraft && <BrowseRowEditor draft={rowDraft} collections={administration.collectionOptions} saving={saving} onCancel={() => setRowDraft(null)} onSave={saveRow} />}
+    {rowDraft && <BrowseRowEditor games={games} draft={rowDraft} collections={administration.collectionOptions} saving={saving} onCancel={() => setRowDraft(null)} onSave={saveRow} />}
     {pendingRemoval && <div className="confirm-backdrop"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-presentation-title"><p className="stream-kicker">Remove {pendingRemoval.kind === "row" ? "Browse Row" : "Collection"}</p><h2 id="remove-presentation-title">Remove {pendingRemoval.name}?</h2><p>{pendingRemoval.kind === "collection" ? "Any Browse Row that points to this Collection will also be removed. Games and Game Files are not affected." : "This removes the shelf from Browse. Collections, games, Saves, and Game Files are not affected."}</p><div><button className="stream-button secondary" type="button" onClick={() => setPendingRemoval(null)} disabled={saving} autoFocus>Cancel</button><button className="stream-button danger" type="button" onClick={() => void remove()} disabled={saving}>{saving ? "Removing…" : "Remove"}</button></div></section></div>}
   </main>;
 }
@@ -131,16 +132,27 @@ function CollectionEditor({ draft, games, saving, onCancel, onSave }: { draft: C
   return <div className="presentation-editor-backdrop"><form className="presentation-editor" onSubmit={submit}><header><div><p className="stream-kicker">{draft.id ? "Edit Collection" : "New Collection"}</p><h2>{draft.id ? draft.name : "Build a Collection"}</h2></div><button type="button" aria-label="Close Collection editor" onClick={onCancel}>×</button></header><div className="presentation-fields"><label><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={64} required autoFocus /></label><label><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={240} rows={3} required /></label></div><div className="collection-game-picker-heading"><div><h3>Choose games</h3><span>{gameIds.length} selected</span></div><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a title…" aria-label="Find a title for this Collection" /></div><div className="collection-game-picker">{filtered.map((game) => <button key={game.id} type="button" className={gameIds.includes(game.id) ? "selected" : ""} onClick={() => toggle(game.id)} aria-pressed={gameIds.includes(game.id)}><span><CoverArt game={game} /></span><b>{game.displayName}</b><i>{gameIds.includes(game.id) ? "✓" : "+"}</i></button>)}</div><footer><button className="stream-button secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="stream-button primary" type="submit" disabled={saving}>{saving ? "Saving…" : draft.id ? "Save Collection" : "Create Collection"}</button></footer></form></div>;
 }
 
-function BrowseRowEditor({ draft, collections, saving, onCancel, onSave }: { draft: RowDraft; collections: PresentationAdministration["collectionOptions"]; saving: boolean; onCancel: () => void; onSave: (input: BrowseRowInput) => Promise<void> }): React.JSX.Element {
+function BrowseRowEditor({ draft, games, collections, saving, onCancel, onSave }: { draft: RowDraft; games: GameSummary[]; collections: PresentationAdministration["collectionOptions"]; saving: boolean; onCancel: () => void; onSave: (input: BrowseRowInput) => Promise<void> }): React.JSX.Element {
   const [title, setTitle] = useState(draft.title);
   const [type, setType] = useState(draft.type);
   const [value, setValue] = useState(draft.value);
+  const [filters, setFilters] = useState<BrowseRowFilters>(draft.filters);
+  const genres = [...new Set([...games.flatMap((game) => game.genres), ...(filters.genres ?? [])])].sort();
+  const series = [...new Set([...games.flatMap((game) => game.series ? [game.series] : []), ...(filters.series ? [filters.series] : [])])].sort();
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const rule: BrowseRowRule = type === "genres" ? { type, genres: value.split(",").map((item) => item.trim()).filter(Boolean) } : type === "collection" ? { type, collectionId: value } : { type };
-    void onSave({ title, rule });
+    void onSave({ title, rule: { ...rule, filters } });
   };
-  return <div className="presentation-editor-backdrop"><form className="presentation-editor browse-row-editor" onSubmit={submit}><header><div><p className="stream-kicker">{draft.id ? "Edit Browse Row" : "New Browse Row"}</p><h2>{draft.id ? draft.title : "Add a shelf"}</h2></div><button type="button" aria-label="Close Browse Row editor" onClick={onCancel}>×</button></header><div className="presentation-fields"><label><span>Row title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={64} required autoFocus /></label><label><span>Content source</span><select value={type} onChange={(event) => { setType(event.target.value as BrowseRowRule["type"]); setValue(""); }}><option value="all">All games</option><option value="continue">Continue Playing</option><option value="favorites">Favorites</option><option value="recent">Recently Played</option><option value="genres">Matching genres</option><option value="collection">A Collection</option></select></label>{type === "genres" && <label><span>Genres, separated by commas</span><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="Adventure, RPG, Strategy" required /></label>}{type === "collection" && <label><span>Collection</span><select value={value} onChange={(event) => setValue(event.target.value)} required><option value="">Choose a Collection…</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>}</div><p className="row-editor-note">Empty personal rows—such as Favorites before a player adds any—stay hidden on Browse until they have content.</p><footer><button className="stream-button secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="stream-button primary" type="submit" disabled={saving}>{saving ? "Saving…" : draft.id ? "Save Browse Row" : "Create Browse Row"}</button></footer></form></div>;
+  return <div className="presentation-editor-backdrop"><form className="presentation-editor browse-row-editor" onSubmit={submit}><header><div><p className="stream-kicker">{draft.id ? "Edit Browse Row" : "New Browse Row"}</p><h2>{draft.id ? draft.title : "Add a shelf"}</h2></div><button type="button" aria-label="Close Browse Row editor" onClick={onCancel}>×</button></header><div className="presentation-fields"><label><span>Row title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={64} required autoFocus /></label><label><span>Content source</span><select value={type} onChange={(event) => { setType(event.target.value as BrowseRowRule["type"]); setValue(""); setFilters((current) => ({ ...current, genres: undefined })); }}><option value="all">All games</option><option value="continue">Continue Playing</option><option value="favorites">Favorites</option><option value="recent">Recently Played</option><option value="genres">Matching genres</option><option value="collection">A Collection</option></select></label>{type === "genres" && <label><span>Genres, separated by commas</span><input value={value} onChange={(event) => setValue(event.target.value)} placeholder="Adventure, RPG, Strategy" required /></label>}{type === "collection" && <label><span>Collection</span><select value={value} onChange={(event) => setValue(event.target.value)} required><option value="">Choose a Collection…</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>}
+      <fieldset className="browse-row-filters"><legend>Filter criteria</legend>
+        <p>Games must match every selected criterion. Leave a filter empty to include all values.</p>
+        <label><span>Platform</span><select value={filters.platform ?? ""} onChange={(event) => setFilters({ ...filters, platform: event.target.value as BrowseRowFilters["platform"] || undefined })}><option value="">All platforms</option>{Object.values(platforms).map((platform) => <option key={platform.key} value={platform.key}>{platformShortName(platform.key)}</option>)}</select></label>
+        {type !== "genres" && <label><span>Genres</span><select multiple size={4} value={filters.genres ?? []} onChange={(event) => setFilters({ ...filters, genres: Array.from(event.target.selectedOptions, (option) => option.value) })} aria-describedby="row-genres-help">{genres.map((genre) => <option key={genre} value={genre}>{genre}</option>)}</select><small id="row-genres-help">Matches any selected genre. Hold Command or Ctrl to select multiple genres.</small></label>}
+        <label><span>Series</span><select value={filters.series ?? ""} onChange={(event) => setFilters({ ...filters, series: event.target.value || undefined })}><option value="">All series</option>{series.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+        <button className="stream-button secondary" type="button" onClick={() => setFilters({})}>Clear filters</button>
+      </fieldset>
+    </div><p className="row-editor-note">Empty personal rows—such as Favorites before a player adds any—stay hidden on Browse until they have content.</p><footer><button className="stream-button secondary" type="button" onClick={onCancel} disabled={saving}>Cancel</button><button className="stream-button primary" type="submit" disabled={saving}>{saving ? "Saving…" : draft.id ? "Save Browse Row" : "Create Browse Row"}</button></footer></form></div>;
 }
 
 function CollectionMiniCovers({ gameIds, games }: { gameIds: string[]; games: GameSummary[] }): React.JSX.Element {
@@ -155,6 +167,15 @@ function rowRuleValue(rule: BrowseRowRule): string {
 }
 
 function describeRule(rule: BrowseRowRule, administration: PresentationAdministration): string {
+  const filters = rule.filters;
+  return [describeSource(rule, administration),
+    filters?.platform ? platformShortName(filters.platform) : "",
+    filters?.genres?.length ? "Genres · " + filters.genres.join(", ") : "",
+    filters?.series ? "Series · " + filters.series : "",
+  ].filter(Boolean).join(" · AND · ");
+}
+
+function describeSource(rule: BrowseRowRule, administration: PresentationAdministration): string {
   if (rule.type === "all") return "All games in the library";
   if (rule.type === "continue") return "Games with saved progress for the active player";
   if (rule.type === "favorites") return "Favorites for the active player";

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type {
   DiscoveredGameFile,
   GameDetail,
@@ -9,7 +10,6 @@ import type {
   EmulatorProfile,
   PlatformKey,
 } from "../domain/types.js";
-import { WEB_CHECKPOINT_COMPATIBILITY } from "../domain/types.js";
 import type { PortalDatabase } from "./database.js";
 import { hasCuratedMetadata, metadataForGame } from "./nes-metadata.js";
 import { isProfileAvatarKey, profileAvatarChoice, type ProfileAvatarKey } from "../domain/profile-avatars.js";
@@ -54,12 +54,14 @@ interface PlaybackSourceRow {
   relative_path: string;
   edition_id: string;
   content_hash: string;
+  byte_size: number;
 }
 
 export interface PlaybackSourceRecord {
   relativePath: string;
   editionId: string;
   contentHash: string;
+  byteSize: number;
 }
 
 export interface ScanCommitResult {
@@ -82,9 +84,9 @@ export class CatalogRepository {
       .prepare(
         `INSERT INTO library_sources(id, name, root_path, platform_key)
          VALUES (?, ?, ?, 'nes')
-         ON CONFLICT(id) DO NOTHING`,
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
       )
-      .run(SOURCE_ID, "NES Library", rootPath);
+      .run(SOURCE_ID, "Game Library", rootPath);
   }
 
   getLibrarySource(): LibrarySourceRecord {
@@ -117,8 +119,8 @@ export class CatalogRepository {
     `);
     const upsertEdition = this.database.prepare(`
       INSERT INTO editions(id, game_id, platform_key, preferred, active)
-      VALUES (?, ?, 'nes', 1, 1)
-      ON CONFLICT(id) DO UPDATE SET game_id = excluded.game_id, active = 1
+      VALUES (?, ?, ?, 1, 1)
+      ON CONFLICT(id) DO UPDATE SET game_id = excluded.game_id, platform_key = excluded.platform_key, active = 1
     `);
     const upsertFile = this.database.prepare(`
       INSERT INTO game_files(
@@ -136,7 +138,7 @@ export class CatalogRepository {
     let added = 0;
     const previousGameIds = new Map<string, string>();
     const groupedGameIds = new Set<string>();
-    const matchesByHash = new Map(metadataMatches.map((match) => [match.contentHash, match]));
+    const matchesByHash = new Map(metadataMatches.map((match) => [`${match.platform}\0${match.contentHash}`, match]));
     const matchedGameIds = new Set<string>();
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -145,6 +147,7 @@ export class CatalogRepository {
         .run(SOURCE_ID);
 
       for (const file of files) {
+        const platform = file.platform ?? platformForRelativePath(file.relativePath);
         if (!existingStatement.get(SOURCE_ID, file.relativePath)) added += 1;
         const prior = this.database.prepare(`
           SELECT editions.game_id, games.added_at
@@ -153,8 +156,10 @@ export class CatalogRepository {
           JOIN games ON games.id = editions.game_id
           WHERE game_files.library_source_id = ? AND game_files.relative_path = ?
         `).get(SOURCE_ID, file.relativePath) as unknown as { game_id: string; added_at: string } | undefined;
-        const gameId = stableId("game", `nes\0${gameIdentityKey(file.displayName)}`);
-        const editionId = stableId("edition", file.contentHash);
+        const gameId = stableId("game", `${platform}\0${gameIdentityKey(file.displayName)}`);
+        // Preserve every existing NES Edition identifier so upgrades retain Saves,
+        // Checkpoints, history, and Favorites. New platforms namespace their hashes.
+        const editionId = stableId("edition", platform === "nes" ? file.contentHash : `${platform}\0${file.contentHash}`);
         const fileId = stableId("file", `${SOURCE_ID}\0${file.relativePath}`);
         upsertGame.run(gameId, file.displayName, now, now);
         groupedGameIds.add(gameId);
@@ -164,7 +169,7 @@ export class CatalogRepository {
             UPDATE games SET added_at = CASE WHEN added_at > ? THEN ? ELSE added_at END WHERE id = ?
           `).run(prior.added_at, prior.added_at, gameId);
         }
-        upsertEdition.run(editionId, gameId);
+        upsertEdition.run(editionId, gameId, platform);
         upsertFile.run(
           fileId,
           editionId,
@@ -174,13 +179,13 @@ export class CatalogRepository {
           file.byteSize,
           file.modifiedAtMs,
         );
-        const metadataMatch = matchesByHash.get(file.contentHash);
+        const metadataMatch = matchesByHash.get(`${platform}\0${file.contentHash}`);
         if (metadataMatch) {
           this.database.prepare(`
             INSERT INTO metadata_matches(
               game_id, provider_key, provider_game_id, display_name, release_year,
               description, genres_json, series_name, cover_url, matched_at
-            ) VALUES (?, 'retronian', ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
               provider_key = excluded.provider_key,
               provider_game_id = excluded.provider_game_id,
@@ -192,7 +197,7 @@ export class CatalogRepository {
               cover_url = excluded.cover_url,
               matched_at = excluded.matched_at
           `).run(
-            gameId, metadataMatch.canonicalId, metadataMatch.displayName, metadataMatch.releaseYear,
+            gameId, metadataMatch.providerKey, metadataMatch.canonicalId, metadataMatch.displayName, metadataMatch.releaseYear,
             metadataMatch.description, JSON.stringify(metadataMatch.genres), metadataMatch.series,
             metadataMatch.coverUrl, now,
           );
@@ -301,9 +306,6 @@ export class CatalogRepository {
              FROM save_checkpoints AS checkpoint
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
-               AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = $core
-               AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
            EXISTS (
@@ -352,9 +354,6 @@ export class CatalogRepository {
              SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
-               AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = $core
-               AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
@@ -372,9 +371,6 @@ export class CatalogRepository {
       )
       .all({
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as GameRow[];
     return rows.map(toGameSummary);
   }
@@ -395,9 +391,6 @@ export class CatalogRepository {
              FROM save_checkpoints AS checkpoint
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
-               AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = $core
-               AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
            EXISTS (
@@ -446,9 +439,6 @@ export class CatalogRepository {
              SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
-               AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = $core
-               AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
@@ -465,13 +455,10 @@ export class CatalogRepository {
       )
       .get({
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
         $game: gameId,
       }) as unknown as GameRow | undefined;
     if (!row) return null;
-    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl };
+    return { ...toGameSummary(row), editionId: row.edition_id, sourceDisplayName: row.display_name, artworkSourceUrl: row.corrected_cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path, row.platform_key).coverUrl };
   }
 
   getPreferredGameFile(gameId: string, playerKey = DEFAULT_PLAYER_KEY): string | null {
@@ -481,7 +468,7 @@ export class CatalogRepository {
   getPlaybackSource(gameId: string, playerKey = DEFAULT_PLAYER_KEY): PlaybackSourceRecord | null {
     const row = this.database
       .prepare(
-        `SELECT game_files.relative_path, editions.id AS edition_id, game_files.content_hash
+        `SELECT game_files.relative_path, editions.id AS edition_id, game_files.content_hash, game_files.byte_size
          FROM games
          JOIN editions ON editions.game_id = games.id
            AND editions.active = 1
@@ -496,9 +483,6 @@ export class CatalogRepository {
            SELECT MAX(checkpoint.created_at) FROM save_checkpoints AS checkpoint
            WHERE checkpoint.edition_id = editions.id
              AND checkpoint.player_key = $player
-             AND checkpoint.adapter_key = $adapter
-             AND checkpoint.core_key = $core
-             AND checkpoint.runtime_version = $runtime
              AND checkpoint.status IN ('candidate', 'verified')
          ) DESC, editions.preferred DESC, game_files.relative_path
          LIMIT 1`,
@@ -506,11 +490,13 @@ export class CatalogRepository {
       .get({
         $game: gameId,
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $core: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as PlaybackSourceRow | undefined;
-    return row ? { relativePath: row.relative_path, editionId: row.edition_id, contentHash: row.content_hash } : null;
+    return row ? {
+      relativePath: row.relative_path,
+      editionId: row.edition_id,
+      contentHash: row.content_hash,
+      byteSize: row.byte_size,
+    } : null;
   }
 
   getLibraryRoot(): string {
@@ -691,7 +677,7 @@ export class CatalogRepository {
   getArtworkSource(gameId: string): string | null {
     const row = this.database
       .prepare(
-        `SELECT games.display_name, MIN(game_files.relative_path) AS relative_path,
+        `SELECT games.display_name, editions.platform_key, MIN(game_files.relative_path) AS relative_path,
            metadata_corrections.cover_url, metadata_matches.cover_url AS matched_cover_url
          FROM games
          JOIN editions ON editions.game_id = games.id AND editions.active = 1
@@ -701,9 +687,9 @@ export class CatalogRepository {
          WHERE games.id = ? AND games.active = 1
          GROUP BY games.id`,
       )
-      .get(gameId) as unknown as { display_name: string; relative_path: string; cover_url: string | null; matched_cover_url: string | null } | undefined;
+      .get(gameId) as unknown as { display_name: string; platform_key: PlatformKey; relative_path: string; cover_url: string | null; matched_cover_url: string | null } | undefined;
     if (!row) return null;
-    return row.cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path).coverUrl;
+    return row.cover_url || row.matched_cover_url || metadataForGame(row.display_name, row.relative_path, row.platform_key).coverUrl;
   }
 }
 
@@ -715,9 +701,22 @@ function gameIdentityKey(displayName: string): string {
   return displayName.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
+function platformForRelativePath(relativePath: string): PlatformKey {
+  const extension = path.extname(relativePath).toLocaleLowerCase("en-US");
+  if ([".sfc", ".smc", ".snes"].includes(extension)) return "snes";
+  if (extension === ".a26") return "atari2600";
+  if (extension === ".bin") {
+    const directories = relativePath.split(/[\\/]/).slice(0, -1);
+    if (directories.some((directory) => ["atari", "atari2600", "2600", "vcs"].includes(directory.normalize("NFKD").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "")))) {
+      return "atari2600";
+    }
+  }
+  return "nes";
+}
+
 function toGameSummary(row: GameRow): GameSummary {
-  const gameMetadata = metadataForGame(row.display_name, row.relative_path);
-  const curated = hasCuratedMetadata(row.display_name);
+  const gameMetadata = metadataForGame(row.display_name, row.relative_path, row.platform_key);
+  const curated = hasCuratedMetadata(row.display_name, row.platform_key);
   const correctedGenres = parseGenres(row.corrected_genres_json);
   const matchedGenres = parseGenres(row.matched_genres_json);
   return {

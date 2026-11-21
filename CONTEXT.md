@@ -24,9 +24,33 @@ _Avoid_: Game emulator setting, core selection
 A client-owned translator from a resolved Emulator Profile to that client’s emulator implementation.
 _Avoid_: Platform, core
 
+**Portal Server**:
+A single running Home Game Portal installation that owns one household Catalog, its Player Profiles, presentation, play history, and Checkpoints. A client may remember several Portal Servers but interacts with only one active Portal Server at a time.
+_Avoid_: Library Source, merged library
+
+**Client Device**:
+An installed client, such as one Apple TV installation, authorized by a Portal Server through Device Pairing. Authorization belongs to the installation rather than to a Player Profile.
+_Avoid_: Player Profile, user account
+
+**Device Pairing**:
+A short-lived, administrator-approved exchange that registers a Client Device with one Portal Server and issues revocable device credentials.
+_Avoid_: Player Profile selection, login
+
 **Checkpoint**:
 An immutable, runtime-specific snapshot captured for one Edition and Player Profile. Checkpoints are versioned, verified after restore, and may roll back to an earlier compatible generation.
 _Avoid_: Game File, universally portable Save
+
+**Checkpoint Format**:
+The client-neutral compatibility identity for Checkpoint bytes, including the emulator core revision, serialization contract, and state-affecting configuration. Different Playback Adapters may share Checkpoints only when they implement the same proven Checkpoint Format.
+_Avoid_: Playback Adapter, file extension
+
+**Checkpoint Lineage**:
+The ordered Checkpoint history that begins when a Player Profile starts or resumes one progression through an Edition. Starting New creates a new lineage while the previous lineage remains available for bounded recovery.
+_Avoid_: manual save slot, Play Session
+
+**Playback Lease**:
+The server-issued, renewable right for one Client Device to play one Game for one Player Profile. A conflicting client must take over or wait; stale leases may not publish newer Checkpoints.
+_Avoid_: launch URL, Play Session
 
 **Metadata Match**:
 The presentation metadata associated with a Game, including administrator corrections that survive Library Source scans.

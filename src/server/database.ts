@@ -42,14 +42,22 @@ function runMigrations(database: PortalDatabase, migrationsDir: string): void {
   for (const filename of files) {
     if (appliedStatement.get(filename)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
+    const migrateWithForeignKeysOff = sql.startsWith("-- migrate-with-foreign-keys-off");
+    if (migrateWithForeignKeysOff) database.exec("PRAGMA foreign_keys = OFF;");
     database.exec("BEGIN IMMEDIATE");
     try {
       database.exec(sql);
+      if (migrateWithForeignKeysOff) {
+        const violations = database.prepare("PRAGMA foreign_key_check").all();
+        if (violations.length) throw new Error(`Migration ${filename} left invalid foreign-key references.`);
+      }
       recordStatement.run(filename, new Date().toISOString());
       database.exec("COMMIT");
     } catch (error) {
       database.exec("ROLLBACK");
       throw error;
+    } finally {
+      if (migrateWithForeignKeysOff) database.exec("PRAGMA foreign_keys = ON;");
     }
   }
 }

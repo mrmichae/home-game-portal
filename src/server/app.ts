@@ -1,17 +1,29 @@
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import type { AppConfig } from "./config.js";
 import { CatalogRepository, DEFAULT_PLAYER_KEY, type ScanCommitResult } from "./catalog-repository.js";
 import { openDatabase, type PortalDatabase } from "./database.js";
-import { scanNesLibrary } from "./library-scanner.js";
+import { scanGameLibrary } from "./library-scanner.js";
 import { PlaybackResolver } from "./playback-resolver.js";
 import { VersionedCheckpointStore } from "./checkpoint-store.js";
 import { ArtworkStore } from "./artwork-store.js";
 import { PortalConfiguration } from "./portal-configuration.js";
 import { PortalPresentation } from "./portal-presentation.js";
 import type { BrowseRowInput, CollectionInput, MetadataCorrectionInput, ScanStatus } from "../domain/types.js";
-import { RetronianMetadataProvider } from "./metadata-provider.js";
+import { PortalMetadataProvider, type MetadataProvider } from "./metadata-provider.js";
+import { DevicePairing, type ClientDevice } from "./device-pairing.js";
+import { PortalIdentity } from "./portal-identity.js";
+import { PlaybackLeases, LEASE_RENEWAL_INTERVAL_SECONDS, type PlaybackLease } from "./playback-leases.js";
+import { PlaybackGrants, type PlaybackGrant } from "./playback-grants.js";
+import { NATIVE_CHECKPOINT_COMPATIBILITY } from "../domain/types.js";
+import type { CheckpointContext } from "./checkpoint-store.js";
+import { PairingRateLimiter } from "./pairing-rate-limiter.js";
+import { SavedStateStore } from "./saved-state-store.js";
+
+const PORTAL_SERVER_VERSION = "0.1.0";
+const NATIVE_API_VERSION = "1";
 
 export interface PortalApplication {
   app: Express;
@@ -19,12 +31,15 @@ export interface PortalApplication {
   catalog: CatalogRepository;
   configuration: PortalConfiguration;
   presentation: PortalPresentation;
+  identity: PortalIdentity;
+  devicePairing: DevicePairing;
+  playbackLeases: PlaybackLeases;
   rescan: () => Promise<ScanCommitResult>;
   close: () => void;
 }
 
 interface PortalApplicationDependencies {
-  metadataProvider?: Pick<RetronianMetadataProvider, "match">;
+  metadataProvider?: MetadataProvider;
 }
 
 export function createPortalApplication(config: AppConfig, dependencies: PortalApplicationDependencies = {}): PortalApplication {
@@ -34,9 +49,16 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
   configuration.initialize();
   const presentation = new PortalPresentation(database);
   const checkpointStore = new VersionedCheckpointStore(config.savesDir, database);
+  const savedStateStore = new SavedStateStore(config.savesDir, database);
   const playbackResolver = new PlaybackResolver(catalog, checkpointStore);
   const artworkStore = new ArtworkStore(config.artworkDir, catalog);
-  const metadataProvider = dependencies.metadataProvider ?? new RetronianMetadataProvider(path.join(config.dataDir, "metadata"));
+  const metadataProvider = dependencies.metadataProvider ?? new PortalMetadataProvider(path.join(config.dataDir, "metadata"));
+  const identityStore = new PortalIdentity(database, config.portalName);
+  const identity = identityStore.initialize();
+  const devicePairing = new DevicePairing(database);
+  const playbackLeases = new PlaybackLeases(database);
+  const playbackGrants = new PlaybackGrants(catalog);
+  const pairingRateLimiter = new PairingRateLimiter();
   const app = express();
   let scanState: ScanStatus = { status: "idle", lastScannedAt: catalog.getLibrarySource().lastScannedAt, message: null };
   let activeScan: Promise<ScanCommitResult> | null = null;
@@ -45,7 +67,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     if (activeScan) return activeScan;
     scanState = { ...scanState, status: "scanning", message: null };
     const libraryRoot = catalog.getLibraryRoot();
-    activeScan = scanNesLibrary(libraryRoot)
+    activeScan = scanGameLibrary(libraryRoot)
       .then(async (files) => {
         const matches = await metadataProvider.match(files).catch((error: unknown) => {
           console.warn("[Home Game Portal] Metadata enrichment skipped; the library scan will continue.", error);
@@ -72,6 +94,7 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
 
   app.disable("x-powered-by");
   app.use((_request, response, next) => {
+    response.setHeader("X-Portal-Request-ID", randomUUID());
     response.setHeader("Referrer-Policy", "same-origin");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -100,6 +123,400 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     response.status(403).json({ message: "Administrator access is required." });
     return false;
   };
+  const requireClientDevice = (request: Request, response: Response): ClientDevice | null => {
+    const authorization = request.headers.authorization ?? "";
+    const match = /^Bearer\s+(.+)$/i.exec(authorization);
+    const result = match ? devicePairing.authenticateResult(match[1]) : { status: "unknown" as const };
+    if (result.status === "authorized") return result.device;
+    if (result.status === "revoked") {
+      v1Error(response, 401, "device_revoked", "This Client Device was revoked. Pair it again to continue.");
+      return null;
+    }
+    v1Error(response, 401, "device_unauthorized", "Pair this Client Device with the Portal Server.");
+    return null;
+  };
+  const v1PlayerKeyFor = (request: Request, response: Response): string | null => {
+    const profileKey = typeof request.query.profileKey === "string" ? request.query.profileKey : "";
+    if (profileKey && catalog.getPlayerProfile(profileKey)) return profileKey;
+    v1Error(response, 404, "profile_not_found", "That Player Profile is no longer available.");
+    return null;
+  };
+
+  app.get("/api/v1/system", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      serverId: identity.serverId,
+      serverName: identity.displayName,
+      serverVersion: PORTAL_SERVER_VERSION,
+      apiVersions: [NATIVE_API_VERSION],
+      minimumClientVersion: "0.1.0",
+      pairingRequired: true,
+      transport: { scope: "trusted-lan", https: false },
+      capabilities: {
+        platforms: ["nes"],
+        nativePlayback: [{ platformKey: "nes", coreKey: "fceumm" }],
+        checkpointFormats: [{
+          key: NATIVE_CHECKPOINT_COMPATIBILITY.formatKey,
+          coreKey: "fceumm",
+          status: "provisional",
+        }],
+      },
+    });
+  });
+
+  app.post("/api/v1/pairings", (request, response) => {
+    if (!pairingRateLimiter.allow(request.ip ?? request.socket.remoteAddress ?? "unknown")) {
+      response.setHeader("Retry-After", "600");
+      return v1Error(response, 429, "pairing_rate_limited", "Wait before starting another Pairing Request.", true);
+    }
+    try {
+      const pairing = devicePairing.create({
+        deviceName: String(request.body?.deviceName ?? ""),
+        appVersion: String(request.body?.appVersion ?? ""),
+        credentialDigest: String(request.body?.credentialDigest ?? ""),
+      });
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(201).json({ pairing });
+    } catch (error) {
+      return v1Error(response, 400, "invalid_pairing_request", error instanceof Error ? error.message : "Pairing could not begin.");
+    }
+  });
+
+  app.get("/api/v1/pairings/:pairingId", (request, response) => {
+    const authorization = request.headers.authorization ?? "";
+    const match = /^Pairing\s+(.+)$/i.exec(authorization);
+    const status = match ? devicePairing.status(request.params.pairingId, match[1]) : null;
+    response.setHeader("Cache-Control", "no-store");
+    return status
+      ? response.json({ pairing: status })
+      : v1Error(response, 404, "pairing_not_found", "That Pairing Request is unavailable.");
+  });
+
+  app.get("/api/admin/device-pairings", (request, response) => {
+    if (!requireAdministrator(request, response)) return;
+    response.json({ pairings: devicePairing.listPending() });
+  });
+
+  app.post("/api/admin/device-pairings/approve", (request, response) => {
+    if (!requireAdministrator(request, response)) return;
+    try {
+      return response.json({ device: devicePairing.approve(String(request.body?.code ?? "")) });
+    } catch (error) {
+      return response.status(400).json({ message: error instanceof Error ? error.message : "Pairing could not be approved." });
+    }
+  });
+
+  app.post("/api/admin/device-pairings/:pairingId/deny", (request, response) => {
+    if (!requireAdministrator(request, response)) return;
+    return devicePairing.deny(request.params.pairingId)
+      ? response.status(204).send()
+      : response.status(404).json({ message: "That Pairing Request is unavailable." });
+  });
+
+  app.get("/api/admin/client-devices", (request, response) => {
+    if (!requireAdministrator(request, response)) return;
+    response.json({ devices: devicePairing.listDevices() });
+  });
+
+  app.delete("/api/admin/client-devices/:deviceId", (request, response) => {
+    if (!requireAdministrator(request, response)) return;
+    return devicePairing.revoke(request.params.deviceId)
+      ? response.status(204).send()
+      : response.status(404).json({ message: "That Client Device is unavailable." });
+  });
+
+  app.get("/api/v1/profiles", (request, response) => {
+    if (!requireClientDevice(request, response)) return;
+    response.json({ profiles: catalog.listPlayerProfiles() });
+  });
+
+  app.get("/api/v1/catalog", (request, response) => {
+    if (!requireClientDevice(request, response)) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    // API v1 is the NES-only native tvOS contract. Browser SNES support must
+    // not advertise titles that this client cannot launch.
+    const games = catalog.listGames(playerKey).filter((game) => game.platform === "nes");
+    const body = {
+      shelf: { id: "nintendo-entertainment-system", title: "Nintendo Entertainment System", games },
+      scan: scanState,
+      presentation: presentation.catalog(games),
+    };
+    return versionedJson(request, response, body);
+  });
+
+  app.get("/api/v1/games/:gameId", (request, response) => {
+    if (!requireClientDevice(request, response)) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    const found = catalog.getGame(request.params.gameId, playerKey);
+    const game = found?.platform === "nes" ? found : null;
+    return game
+      ? versionedJson(request, response, { game })
+      : v1Error(response, 404, "game_not_found", "That Game is no longer in this Catalog.");
+  });
+
+  app.put("/api/v1/games/:gameId/favorite", (request, response) => {
+    if (!requireClientDevice(request, response)) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    if (typeof request.body?.favorite !== "boolean") {
+      return v1Error(response, 400, "favorite_required", "Choose whether this Game belongs in Favorites.");
+    }
+    try {
+      const game = catalog.setFavorite(request.params.gameId, request.body.favorite, new Date(), playerKey);
+      return versionedJson(request, response, { game });
+    } catch (error) {
+      return v1Error(response, 404, "game_not_found", error instanceof Error ? error.message : "That Game is unavailable.");
+    }
+  });
+
+  app.delete("/api/v1/games/:gameId/continue-playing", (request, response) => {
+    if (!requireClientDevice(request, response)) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    try {
+      return response.json({ game: catalog.dismissContinuePlaying(request.params.gameId, new Date(), playerKey) });
+    } catch (error) {
+      return v1Error(response, 404, "game_not_found", error instanceof Error ? error.message : "That Game is unavailable.");
+    }
+  });
+
+  const checkpointContextForLease = (lease: PlaybackLease, device: ClientDevice): CheckpointContext | null => {
+    const source = catalog.getPlaybackSource(lease.gameId, lease.playerKey);
+    if (!source || source.editionId !== lease.editionId) return null;
+    return {
+      gameId: lease.gameId,
+      editionId: lease.editionId,
+      playerKey: lease.playerKey,
+      romContentHash: source.contentHash,
+      compatibility: { ...NATIVE_CHECKPOINT_COMPATIBILITY, runtimeVersion: device.appVersion },
+    };
+  };
+  const nativeLeasePayload = (
+    lease: PlaybackLease,
+    grant: PlaybackGrant,
+    context: CheckpointContext,
+    intent: "resume" | "fresh",
+  ) => ({
+    lease: {
+      id: lease.id,
+      revision: lease.revision,
+      expiresAt: lease.expiresAt,
+      renewalIntervalSeconds: LEASE_RENEWAL_INTERVAL_SECONDS,
+      controlEvents: [],
+    },
+    game: { id: lease.gameId, editionId: lease.editionId, platformKey: "nes" },
+    gameFile: {
+      grantId: grant.id,
+      downloadUrl: `/api/v1/playback-grants/${grant.id}/game`,
+      expiresAt: grant.expiresAt,
+      byteSize: grant.source.byteSize,
+      sha256: grant.source.contentHash,
+    },
+    emulator: {
+      adapterKey: NATIVE_CHECKPOINT_COMPATIBILITY.adapterKey,
+      coreKey: NATIVE_CHECKPOINT_COMPATIBILITY.coreKey,
+      coreRevision: NATIVE_CHECKPOINT_COMPATIBILITY.runtimeVersion,
+      checkpointFormatKey: NATIVE_CHECKPOINT_COMPATIBILITY.formatKey,
+    },
+    intent,
+    checkpoints: checkpointStore.listRestorable(context).map((checkpoint) => ({
+      ...checkpoint,
+      downloadUrl: `/api/v1/checkpoints/${checkpoint.id}?profileKey=${encodeURIComponent(lease.playerKey)}`,
+    })),
+    checkpointUpload: {
+      url: `/api/v1/playback-leases/${lease.id}/checkpoints`,
+      maximumBytes: 12 * 1024 * 1024,
+      requiredLeaseRevision: lease.revision,
+    },
+  });
+
+  app.post("/api/v1/games/:gameId/playback-leases", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    const intent = request.body?.intent === "fresh" ? "fresh" : request.body?.intent === "resume" ? "resume" : null;
+    if (!intent) return v1Error(response, 400, "playback_intent_required", "Choose Resume or Start New.");
+    if (catalog.getGame(request.params.gameId, playerKey)?.platform !== "nes") {
+      return v1Error(response, 404, "game_not_found", "That Game is not available on this Client Device.");
+    }
+    const source = catalog.getPlaybackSource(request.params.gameId, playerKey);
+    if (!source) return v1Error(response, 404, "game_not_found", "That Game is no longer in this Catalog.");
+    try {
+      const result = playbackLeases.acquire({
+        gameId: request.params.gameId,
+        editionId: source.editionId,
+        playerKey,
+        deviceId: device.id,
+      });
+      if (result.status === "conflict") {
+        const activeDevice = devicePairing.getDevice(result.lease.deviceId);
+        return v1Error(response, 409, "playback_conflict", "This Game is already active on another device.", false, {
+          activeDeviceName: activeDevice?.displayName ?? "Another device",
+          leaseStartedAt: result.lease.startedAt,
+          takeoverEligible: true,
+          leaseId: result.lease.id,
+        });
+      }
+      let context = checkpointContextForLease(result.lease, device);
+      if (!context) return v1Error(response, 409, "game_file_changed", "The Game File changed while playback was starting.");
+      const grant = playbackGrants.issue(request.params.gameId, playerKey, result.lease.id, device.id);
+      if (intent === "fresh") {
+        const lineageId = checkpointStore.startNewLineage(context);
+        context = { ...context, lineageId };
+      }
+      catalog.recordPlaySession(request.params.gameId, new Date(), playerKey);
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(201).json(nativeLeasePayload(result.lease, grant, context, intent));
+    } catch (error) {
+      return v1Error(response, 409, "playback_unavailable", error instanceof Error ? error.message : "Playback could not start.");
+    }
+  });
+
+  app.get("/api/v1/playback-grants/:grantId/game", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const grant = playbackGrants.resolve(request.params.grantId, device.id);
+    const lease = grant ? playbackLeases.authorize(grant.leaseId, device.id) : null;
+    if (!grant || !lease) {
+      return v1Error(response, 404, "playback_grant_unavailable", "This Game File grant expired. Start playback again.");
+    }
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Content-Type", "application/octet-stream");
+    response.setHeader("Content-Disposition", 'inline; filename="game.nes"');
+    return response.sendFile(grant.absolutePath);
+  });
+
+  app.post("/api/v1/playback-leases/:leaseId/renew", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const revision = leaseRevisionFor(request);
+    if (!revision) return v1Error(response, 428, "lease_revision_required", "The current Playback Lease revision is required.");
+    try {
+      const lease = playbackLeases.renew(request.params.leaseId, device.id, revision);
+      response.setHeader("Cache-Control", "no-store");
+      return response.json({ lease: { ...lease, renewalIntervalSeconds: LEASE_RENEWAL_INTERVAL_SECONDS }, controlEvents: [] });
+    } catch (error) {
+      return v1Error(response, 409, "lease_stale", error instanceof Error ? error.message : "The Playback Lease is stale.");
+    }
+  });
+
+  app.post("/api/v1/playback-leases/:leaseId/takeover", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const active = playbackLeases.get(request.params.leaseId);
+    if (!active || active.state !== "active") {
+      return v1Error(response, 404, "lease_not_found", "The active Playback Lease is no longer available.");
+    }
+    if (request.body?.confirm !== true) {
+      return v1Error(response, 400, "takeover_confirmation_required", "Confirm before taking over playback.");
+    }
+    try {
+      const lease = playbackLeases.takeover({
+        gameId: active.gameId,
+        editionId: active.editionId,
+        playerKey: active.playerKey,
+        deviceId: device.id,
+      });
+      playbackGrants.revokeLease(active.id);
+      const context = checkpointContextForLease(lease, device);
+      if (!context) return v1Error(response, 409, "game_file_changed", "The Game File changed before takeover completed.");
+      const grant = playbackGrants.issue(lease.gameId, lease.playerKey, lease.id, device.id);
+      catalog.recordPlaySession(lease.gameId, new Date(), lease.playerKey);
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(201).json(nativeLeasePayload(lease, grant, context, "resume"));
+    } catch (error) {
+      return v1Error(response, 409, "takeover_failed", error instanceof Error ? error.message : "Takeover could not complete.");
+    }
+  });
+
+  app.delete("/api/v1/playback-leases/:leaseId", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const revision = leaseRevisionFor(request);
+    if (!revision) return v1Error(response, 428, "lease_revision_required", "The current Playback Lease revision is required.");
+    if (!playbackLeases.release(request.params.leaseId, device.id, revision)) {
+      return v1Error(response, 409, "lease_stale", "The Playback Lease is stale or unavailable.");
+    }
+    playbackGrants.revokeLease(request.params.leaseId);
+    return response.status(204).send();
+  });
+
+  app.post(
+    "/api/v1/playback-leases/:leaseId/checkpoints",
+    express.raw({ type: "application/octet-stream", limit: "12mb" }),
+    async (request, response, next) => {
+      try {
+        const device = requireClientDevice(request, response);
+        if (!device) return;
+        const lease = playbackLeases.authorize(request.params.leaseId, device.id);
+        if (!lease) return v1Error(response, 409, "lease_unavailable", "This device no longer owns the Playback Lease.");
+        const revision = leaseRevisionFor(request);
+        if (!revision || revision !== lease.revision) {
+          return v1Error(response, 409, "lease_stale", "Refresh the Playback Lease before publishing progress.");
+        }
+        if (!Buffer.isBuffer(request.body)) {
+          return v1Error(response, 415, "checkpoint_bytes_required", "Checkpoint bytes were not understood.");
+        }
+        const context = checkpointContextForLease(lease, device);
+        if (!context) return v1Error(response, 409, "game_file_changed", "The Game File changed before progress was published.");
+        const capturedFrame = Number.parseInt(String(request.headers["x-captured-frame"] ?? ""), 10);
+        if (!Number.isSafeInteger(capturedFrame) || capturedFrame < 0) {
+          return v1Error(response, 400, "captured_frame_invalid", "Checkpoint capture requires a nonnegative frame number.");
+        }
+        const checkpoint = await checkpointStore.capture(context, request.body, capturedFrame);
+        return response.status(201).json({ checkpoint, leaseRevision: lease.revision });
+      } catch (error) {
+        return next(error);
+      }
+    },
+  );
+
+  app.get("/api/v1/checkpoints/:checkpointId", async (request, response, next) => {
+    try {
+      const device = requireClientDevice(request, response);
+      if (!device) return;
+      const playerKey = v1PlayerKeyFor(request, response);
+      if (!playerKey) return;
+      const state = await checkpointStore.readStateForProfile(
+        request.params.checkpointId,
+        playerKey,
+        NATIVE_CHECKPOINT_COMPATIBILITY,
+      );
+      if (!state) return v1Error(response, 404, "checkpoint_not_found", "That compatible Checkpoint is unavailable.");
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Content-Type", "application/octet-stream");
+      return response.send(state);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/v1/checkpoints/:checkpointId/restore-attempts", (request, response) => {
+    const device = requireClientDevice(request, response);
+    if (!device) return;
+    const playerKey = v1PlayerKeyFor(request, response);
+    if (!playerKey) return;
+    const outcome = request.body?.outcome === "verified" ? "verified" : request.body?.outcome === "failed" ? "failed" : null;
+    if (!outcome) return v1Error(response, 400, "restore_outcome_required", "Provide a verified or failed restore outcome.");
+    const recorded = checkpointStore.recordRestoreAttemptForProfile(
+      request.params.checkpointId,
+      playerKey,
+      NATIVE_CHECKPOINT_COMPATIBILITY,
+      {
+        deviceId: device.id,
+        clientVersion: device.appVersion,
+        outcome,
+        observedFrame: Number.isSafeInteger(request.body?.observedFrame) ? request.body.observedFrame : undefined,
+        reason: typeof request.body?.reason === "string" ? request.body.reason : undefined,
+      },
+    );
+    return recorded
+      ? response.status(201).json({ recorded: true })
+      : v1Error(response, 404, "checkpoint_not_found", "That compatible Checkpoint is unavailable.");
+  });
 
   app.get("/api/player-profiles", (_request, response) => {
     response.json({ profiles: catalog.listPlayerProfiles() });
@@ -165,8 +582,8 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     const games = catalog.listGames(playerKeyFor(request));
     response.json({
       shelf: {
-        id: "nintendo-entertainment-system",
-        title: "Nintendo Entertainment System",
+        id: "game-library",
+        title: "Game Library",
         games,
       },
       scan: scanState,
@@ -313,11 +730,126 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
       response.setHeader("Cache-Control", "no-store");
       const playerKey = playerKeyFor(request);
       const manifest = playbackResolver.resolve(request.params.gameId, Date.now(), playerKey);
+      const savedStateId = typeof request.body?.savedStateId === "string" ? request.body.savedStateId : "";
+      if (savedStateId) {
+        const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKey);
+        const savedState = context ? savedStateStore.find(savedStateId, context) : null;
+        if (!savedState) return response.status(404).json({ message: "That saved state is unavailable or incompatible with this game." });
+        const profileQuery = `profile=${encodeURIComponent(playerKey)}`;
+        manifest.resumePlan.checkpoints = [{
+          id: savedState.id,
+          generation: 1,
+          status: "verified",
+          capturedFrame: savedState.capturedFrame,
+          stateUrl: `/api/games/${request.params.gameId}/saved-states/${savedState.id}/state?${profileQuery}`,
+          verifyUrl: `/api/games/${request.params.gameId}/saved-states/${savedState.id}/restored?${profileQuery}`,
+          rejectUrl: `/api/games/${request.params.gameId}/saved-states/${savedState.id}/restored?${profileQuery}`,
+          preserveOnFailure: true,
+        }];
+      }
       catalog.recordPlaySession(request.params.gameId, new Date(), playerKey);
       return response.json({ manifest });
     } catch (error) {
       const message = error instanceof Error ? error.message : "This game could not be prepared.";
       return response.status(message === "Game not found." ? 404 : 409).json({ message });
+    }
+  });
+
+  app.get("/api/games/:gameId/saved-states", (request, response) => {
+    const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+    if (!context) return response.status(404).json({ message: "That game is no longer on this shelf." });
+    return response.json({ savedStates: savedStateStore.list(context) });
+  });
+
+  app.post(
+    "/api/games/:gameId/saved-states",
+    express.raw({ type: "application/octet-stream", limit: "12mb" }),
+    async (request, response, next) => {
+      try {
+        const playerKey = playerKeyFor(request);
+        const sessionId = typeof request.query.session === "string" ? request.query.session : "";
+        const context = playbackResolver.resolveCheckpointSession(sessionId, request.params.gameId, playerKey);
+        if (!context) return response.status(409).json({ message: "This playback session can no longer create a saved state." });
+        if (!Buffer.isBuffer(request.body)) return response.status(415).json({ message: "Saved-state data was not understood." });
+        const capturedFrame = Number.parseInt(String(request.headers["x-captured-frame"] ?? ""), 10);
+        const savedState = await savedStateStore.create(context, request.body, capturedFrame);
+        return response.status(201).json({ savedState });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The saved state could not be created.";
+        if (message.startsWith("Delete a saved state")) return response.status(409).json({ message });
+        return next(error);
+      }
+    },
+  );
+
+  app.put(
+    "/api/games/:gameId/saved-states/:savedStateId/thumbnail",
+    express.raw({ type: ["image/webp", "image/png", "image/jpeg"], limit: "2mb" }),
+    async (request, response, next) => {
+      try {
+        const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+        if (!context) return response.status(404).json({ message: "That game is unavailable." });
+        if (!Buffer.isBuffer(request.body) || !request.body.byteLength) return response.status(415).json({ message: "Thumbnail data was not understood." });
+        const contentType = String(request.headers["content-type"] ?? "").split(";")[0];
+        const savedState = await savedStateStore.attachThumbnail(request.params.savedStateId, context, request.body, contentType);
+        return response.json({ savedState });
+      } catch (error) {
+        return next(error);
+      }
+    },
+  );
+
+  app.get("/api/games/:gameId/saved-states/:savedStateId/thumbnail", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      const thumbnail = context ? await savedStateStore.readThumbnail(request.params.savedStateId, context) : null;
+      if (!thumbnail) return response.status(404).send();
+      response.setHeader("Cache-Control", "private, max-age=86400");
+      response.setHeader("Content-Type", thumbnail.contentType);
+      return response.send(thumbnail.data);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get("/api/games/:gameId/saved-states/:savedStateId/state", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      const state = context ? await savedStateStore.readState(request.params.savedStateId, context) : null;
+      if (!state) return response.status(404).json({ message: "That saved state is unavailable." });
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("Content-Type", "application/octet-stream");
+      return response.send(state);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post("/api/games/:gameId/saved-states/:savedStateId/restored", (request, response) => {
+    const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+    if (!context || !savedStateStore.find(request.params.savedStateId, context)) {
+      return response.status(404).json({ message: "That saved state is unavailable." });
+    }
+    // Only fork automatic progression after the emulator has proven that the
+    // selected durable state loads and advances. A failed load leaves the
+    // player's current Continue Playing lineage untouched.
+    checkpointStore.startNewLineage(context);
+    return response.status(204).send();
+  });
+
+  app.patch("/api/games/:gameId/saved-states/:savedStateId", (request, response) => {
+    const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+    const savedState = context ? savedStateStore.rename(request.params.savedStateId, context, String(request.body?.label ?? "")) : null;
+    return savedState ? response.json({ savedState }) : response.status(404).json({ message: "That saved state is unavailable." });
+  });
+
+  app.delete("/api/games/:gameId/saved-states/:savedStateId", async (request, response, next) => {
+    try {
+      const context = playbackResolver.resolveCheckpointContext(request.params.gameId, playerKeyFor(request));
+      const deleted = context ? await savedStateStore.delete(request.params.savedStateId, context) : false;
+      return deleted ? response.status(204).send() : response.status(404).json({ message: "That saved state is unavailable." });
+    } catch (error) {
+      return next(error);
     }
   });
 
@@ -350,7 +882,9 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     }
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Content-Type", "application/octet-stream");
-    response.setHeader("Content-Disposition", 'inline; filename="game.nes"');
+    const extension = path.extname(absolutePath).toLocaleLowerCase("en-US");
+    const safeExtension = [".nes", ".sfc", ".smc", ".snes", ".a26", ".bin"].includes(extension) ? extension : ".rom";
+    response.setHeader("Content-Disposition", `inline; filename="game${safeExtension}"`);
     return response.sendFile(absolutePath);
   });
 
@@ -444,6 +978,10 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     }
   });
 
+  app.use("/api/v1", (_request, response) => {
+    v1Error(response, 404, "route_not_found", "That native API route does not exist.");
+  });
+
   if (existsSync(config.clientDir)) {
     app.use(express.static(config.clientDir, { index: false, maxAge: "1h" }));
     app.use((request, response, next) => {
@@ -457,8 +995,18 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
   app.use((_request, response) => {
     response.status(404).json({ message: "Not found." });
   });
-  app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
     console.error(error);
+    if (request.path.startsWith("/api/v1/")) {
+      const tooLarge = typeof error === "object" && error !== null && "type" in error && error.type === "entity.too.large";
+      return v1Error(
+        response,
+        tooLarge ? 413 : 500,
+        tooLarge ? "request_too_large" : "internal_error",
+        tooLarge ? "That request is larger than the server accepts." : "The Portal Server hit a snag. Nothing in your library was changed.",
+        !tooLarge,
+      );
+    }
     response.status(500).json({ message: "The portal hit a snag. Nothing in your library was changed." });
   });
 
@@ -468,7 +1016,38 @@ export function createPortalApplication(config: AppConfig, dependencies: PortalA
     catalog,
     configuration,
     presentation,
+    identity: identityStore,
+    devicePairing,
+    playbackLeases,
     rescan,
     close: () => database.close(),
   };
+}
+
+function v1Error(
+  response: Response,
+  status: number,
+  code: string,
+  message: string,
+  retryable = false,
+  details: Record<string, unknown> = {},
+): Response {
+  return response.status(status).json({ error: { code, message, retryable, details } });
+}
+
+function leaseRevisionFor(request: Request): number | null {
+  const header = request.headers["x-lease-revision"];
+  const bodyRevision = request.body && !Buffer.isBuffer(request.body) ? request.body.revision : undefined;
+  const revision = Number(Array.isArray(header) ? header[0] : header ?? bodyRevision);
+  return Number.isSafeInteger(revision) && revision > 0 ? revision : null;
+}
+
+function versionedJson(request: Request, response: Response, body: object): Response {
+  const serialized = JSON.stringify(body);
+  const etag = `\"${createHash("sha256").update(serialized).digest("base64url")}\"`;
+  response.setHeader("ETag", etag);
+  response.setHeader("Cache-Control", "private, no-cache");
+  return request.headers["if-none-match"] === etag
+    ? response.status(304).send()
+    : response.type("application/json").send(serialized);
 }

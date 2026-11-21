@@ -1,8 +1,10 @@
-import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest } from "../../domain/types";
+import { WEB_CHECKPOINT_COMPATIBILITY, type ControllerPresetKey, type LaunchManifest, type PlatformKey, type WebCoreKey } from "../../domain/types";
 import { ResumeCoordinator, type RestoreResult, type ResumableGameManager } from "./resume-coordinator";
 
 type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
 const emulatorJsAssetVersion = WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion;
+// UI-only patches must invalidate the bundle cache without invalidating checkpoints.
+const emulatorJsUiVersion = `${emulatorJsAssetVersion}-mobile.1`;
 
 export interface PlaybackCallbacks {
   onReady: () => void;
@@ -31,6 +33,7 @@ interface EmulatorWindow extends Window {
   EJS_gameName?: string;
   EJS_gameID?: number;
   EJS_pathtodata?: string;
+  EJS_paths?: Record<string, string>;
   EJS_startOnLoaded?: boolean;
   EJS_fullscreenOnLoaded?: boolean;
   EJS_threads?: boolean;
@@ -52,8 +55,11 @@ interface EmulatorWindow extends Window {
   EJS_onSaveState?: unknown;
   EJS_onExit?: () => void;
   EJS_emulator?: {
+    Module?: { AL?: { currentCtx?: { audioCtx?: { state: string; resume: () => Promise<void> } } } };
     callEvent?: (event: string) => void;
     gameManager?: EmulatorGameManager;
+    pause?: () => void;
+    play?: () => void;
   };
   EJS_Runtime?: (options?: RuntimeOptions) => unknown;
 }
@@ -61,6 +67,9 @@ interface EmulatorWindow extends Window {
 export interface PlaybackAdapter {
   mount(manifest: LaunchManifest, callbacks: PlaybackCallbacks): () => void;
   save(): Promise<void>;
+  pause(): void;
+  resume(): void;
+  captureSavedState(): Promise<{ state: Uint8Array; capturedFrame: number; thumbnail: Blob | null }>;
 }
 
 export interface RuntimeProfile {
@@ -93,7 +102,23 @@ const standardGamepadControls: EmulatorDefaultControls[0] = {
   8: { value: "z", value2: "BUTTON_1" },
 };
 
-export function controllerMappingFor(preset: ControllerPresetKey): EmulatorDefaultControls {
+const snesKeyboardControls: EmulatorDefaultControls[0] = {
+  ...keyboardControls,
+  1: { value: "a" },
+  9: { value: "s" },
+  10: { value: "q" },
+  11: { value: "w" },
+};
+
+const snesGamepadControls: EmulatorDefaultControls[0] = {
+  ...standardGamepadControls,
+  1: { value: "a", value2: "BUTTON_4" },
+  9: { value: "s", value2: "BUTTON_3" },
+  10: { value: "q", value2: "LEFT_TOP_SHOULDER" },
+  11: { value: "w", value2: "RIGHT_TOP_SHOULDER" },
+};
+
+export function controllerMappingFor(preset: ControllerPresetKey, platform: PlatformKey = "nes"): EmulatorDefaultControls {
   if (preset === "apple-tv-remote") {
     return fourPlayerMapping({
       0: { value: "space" },
@@ -107,9 +132,9 @@ export function controllerMappingFor(preset: ControllerPresetKey): EmulatorDefau
     });
   }
   if (preset === "joy-con" || preset === "switch-pro") {
-    return fourPlayerMapping(standardGamepadControls);
+    return fourPlayerMapping(platform === "snes" ? snesGamepadControls : standardGamepadControls);
   }
-  return fourPlayerMapping(keyboardControls);
+  return fourPlayerMapping(platform === "snes" ? snesKeyboardControls : keyboardControls);
 }
 
 function fourPlayerMapping(playerOne: EmulatorDefaultControls[0]): EmulatorDefaultControls {
@@ -119,7 +144,7 @@ function fourPlayerMapping(playerOne: EmulatorDefaultControls[0]): EmulatorDefau
 interface CheckpointGatedStartOptions {
   restore: () => Promise<RestoreResult>;
   onRestoreResult: (result: RestoreResult) => void;
-  onRestoreError: () => void;
+  onRestoreError: (error: unknown) => void;
   onRunning: () => void;
   isDisposed: () => boolean;
 }
@@ -153,8 +178,8 @@ export function createCheckpointGatedStartHandler(options: CheckpointGatedStartO
       .then((result) => {
         if (!options.isDisposed()) options.onRestoreResult(result);
       })
-      .catch(() => {
-        if (!options.isDisposed()) options.onRestoreError();
+      .catch((error: unknown) => {
+        if (!options.isDisposed()) options.onRestoreError(error);
       })
       .finally(() => {
         if (!options.isDisposed()) options.onRunning();
@@ -195,6 +220,27 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     return this.saveCurrentState?.() ?? Promise.reject(new Error("The game is not ready to save."));
   }
 
+  pause(): void {
+    (window as EmulatorWindow).EJS_emulator?.pause?.();
+  }
+
+  resume(): void {
+    (window as EmulatorWindow).EJS_emulator?.play?.();
+  }
+
+  async captureSavedState(): Promise<{ state: Uint8Array; capturedFrame: number; thumbnail: Blob | null }> {
+    const gameManager = resumableGameManager((window as EmulatorWindow).EJS_emulator?.gameManager);
+    if (!gameManager) throw new Error("The game is not ready to create a saved state.");
+    const capturedFrame = gameManager.getFrameNum();
+    const state = gameManager.getState().slice();
+    if (!state.byteLength || !Number.isSafeInteger(capturedFrame) || capturedFrame < 0) {
+      throw new Error("The game did not provide a valid saved state.");
+    }
+    const canvas = document.querySelector<HTMLCanvasElement>("#game canvas");
+    const thumbnail = canvas ? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82)) : null;
+    return { state, capturedFrame, thumbnail };
+  }
+
   mount(manifest: LaunchManifest, callbacks: PlaybackCallbacks): () => void {
     const host = window as EmulatorWindow;
     const runtimeProfile = selectRuntimeProfile({
@@ -204,10 +250,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       vendor: window.navigator.vendor,
       platform: window.navigator.platform,
       maxTouchPoints: window.navigator.maxTouchPoints,
-    });
+    }, manifest.playbackProfile.core);
     const exitCoordinator = new PlaybackExitCoordinator(callbacks.onExit);
     const startupRequest = new AbortController();
-    const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal);
+    const gameFilePromise = fetchGameFile(manifest.gameUrl, startupRequest.signal, manifest.platform);
     let running = false;
     let failed = false;
     let disposed = false;
@@ -229,6 +275,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     host.EJS_gameName = manifest.gameName;
     host.EJS_gameID = Number.parseInt(manifest.gameId.slice(0, 8), 16);
     host.EJS_pathtodata = "/emulatorjs/";
+    host.EJS_paths = { "emulator.min.js": `/emulatorjs/emulator.min.js?v=${emulatorJsUiVersion}` };
     host.EJS_startOnLoaded = true;
     host.EJS_fullscreenOnLoaded = false;
     host.EJS_threads = runtimeProfile.threaded;
@@ -242,7 +289,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     // Own restoration here so a later runtime start event cannot rewind gameplay.
     host.EJS_loadStateURL = "";
     host.EJS_defaultOptions = { "save-state-location": "browser" };
-    host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset);
+    host.EJS_defaultControls = controllerMappingFor(manifest.controllerPreset, manifest.platform);
     host.EJS_hideSettings = ["core", "change-core", "save-state-location"];
     host.EJS_Buttons = { netplay: false, settings: false, exitEmulation: false };
     host.EJS_ready = callbacks.onReady;
@@ -256,7 +303,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         if (result.status === "restored") callbacks.onSaveStatus("loaded");
         if (result.status === "fresh") callbacks.onSaveStatus("fresh");
       },
-      onRestoreError: () => callbacks.onSaveStatus("error"),
+      onRestoreError: (error) => {
+        callbacks.onSaveStatus("error");
+        callbacks.onError(error instanceof Error ? error.message : "That saved state could not be loaded.");
+      },
       onRunning: () => {
         running = true;
         this.saveCurrentState = async () => {
@@ -291,17 +341,35 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       }
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isBenignRuntimeRejection(event.reason)) {
+        event.preventDefault();
+        return;
+      }
       if (!running) {
-        if (isBenignRuntimeRejection(event.reason)) {
-          event.preventDefault();
-          return;
-        }
         console.error("[Home Game Portal] EmulatorJS rejected a startup task", event.reason);
         reportError(playerMessage(event.reason));
       }
     };
     window.addEventListener("error", onWindowError);
     window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    // The core's one-shot touchstart listener cannot recover later interruptions
+    // or browsers that grant touch activation only on release. Resolve the live
+    // context on every gesture: it does not exist while the core is downloading.
+    const gameElement = document.querySelector<HTMLElement>("#game");
+    const resumeAudio = () => {
+      const audio = host.EJS_emulator?.Module?.AL?.currentCtx?.audioCtx;
+      if (!audio || (audio.state !== "suspended" && audio.state !== "interrupted")) return;
+      try {
+        // Keep this call synchronous inside the gesture. A rejected attempt must
+        // leave later gestures able to retry, without changing volume or mute.
+        void audio.resume().catch(() => {});
+      } catch {
+        // A context can be closed during runtime teardown; retry on later input.
+      }
+    };
+    const audioGestures = ["pointerdown", "pointerup", "touchend", "click", "keydown"];
+    for (const event of audioGestures) gameElement?.addEventListener(event, resumeAudio, { capture: true, passive: true });
 
     const runtimeScript = document.createElement("script");
     runtimeScript.src = `${runtimeProfile.scriptPath}?v=${emulatorJsAssetVersion}`;
@@ -314,7 +382,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     runtimeScript.onload = async () => {
       const upstreamRuntime = host.EJS_Runtime;
       if (!upstreamRuntime) {
-        reportError("The NES player could not be loaded.");
+        reportError("The game player could not be loaded.");
         return;
       }
       wrappedRuntime = (options = {}) => {
@@ -322,7 +390,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         return upstreamRuntime({
           ...options,
           locateFile: (filename: string, scriptDirectory?: string) =>
-            resolveFceummRuntimeFile(filename, scriptDirectory, upstreamLocateFile, runtimeProfile.wasmPath),
+            resolveLibretroRuntimeFile(filename, scriptDirectory, upstreamLocateFile, runtimeProfile.wasmPath),
         });
       };
       host.EJS_Runtime = wrappedRuntime;
@@ -331,7 +399,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         gameFileUrl = URL.createObjectURL(gameFile);
         // EmulatorJS derives a virtual filename from the URL. Preserve the platform
         // extension in the fragment while retaining the revocable object URL.
-        host.EJS_gameUrl = `${gameFileUrl}#game.nes`;
+        host.EJS_gameUrl = `${gameFileUrl}#game.${gameExtension(manifest.platform)}`;
       } catch (error) {
         if (!disposed) reportError(playerMessage(error));
         return;
@@ -339,7 +407,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       if (disposed) return;
       document.body.appendChild(loaderScript);
     };
-    runtimeScript.onerror = () => reportError("The NES player could not be loaded.");
+    runtimeScript.onerror = () => reportError("The game player could not be loaded.");
     document.body.appendChild(runtimeScript);
 
     const timeout = window.setTimeout(() => {
@@ -355,6 +423,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       window.clearTimeout(timeout);
       window.removeEventListener("error", onWindowError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      for (const event of audioGestures) gameElement?.removeEventListener(event, resumeAudio, { capture: true });
       exitCoordinator.teardown(host.EJS_emulator);
       if (wrappedRuntime && host.EJS_Runtime === wrappedRuntime) delete host.EJS_Runtime;
       if (gameFileUrl) URL.revokeObjectURL(gameFileUrl);
@@ -369,18 +438,22 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
 export async function fetchGameFile(
   gameUrl: string,
   signal: AbortSignal,
+  platform: PlatformKey = "nes",
   fetcher: typeof fetch = fetch,
 ): Promise<Blob> {
   const response = await fetcher(gameUrl, { cache: "no-store", signal });
   if (!response.ok) throw new Error("The game file could not be read from the server. Check the Library Source, then rescan and try again.");
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength < 16 || bytes[0] !== 0x4e || bytes[1] !== 0x45 || bytes[2] !== 0x53 || bytes[3] !== 0x1a) {
-    throw new Error("The selected file is not a valid NES game. The source file was not changed.");
-  }
+  const valid = platform === "snes"
+    ? isValidSnesRom(bytes)
+    : platform === "atari2600"
+      ? isValidAtari2600Rom(bytes)
+      : bytes.byteLength >= 16 && bytes[0] === 0x4e && bytes[1] === 0x45 && bytes[2] === 0x53 && bytes[3] === 0x1a;
+  if (!valid) throw new Error(`The selected file is not a valid ${platformDisplayName(platform)} game. The source file was not changed.`);
   return new Blob([bytes], { type: "application/octet-stream" });
 }
 
-export function resolveFceummRuntimeFile(
+export function resolveLibretroRuntimeFile(
   filename: string,
   scriptDirectory?: string,
   upstreamLocateFile?: RuntimeOptions["locateFile"],
@@ -390,6 +463,8 @@ export function resolveFceummRuntimeFile(
   return upstreamLocateFile?.(filename, scriptDirectory) ?? `${scriptDirectory ?? ""}${filename}`;
 }
 
+export const resolveFceummRuntimeFile = resolveLibretroRuntimeFile;
+
 export function selectRuntimeProfile(environment: {
   crossOriginIsolated: boolean;
   hasSharedArrayBuffer: boolean;
@@ -397,19 +472,54 @@ export function selectRuntimeProfile(environment: {
   vendor?: string;
   platform?: string;
   maxTouchPoints?: number;
-}): RuntimeProfile {
+}, coreKey: WebCoreKey = "fceumm"): RuntimeProfile {
+  const coreAssetName = coreKey;
   if (environment.crossOriginIsolated && environment.hasSharedArrayBuffer && !isAppleWebKit(environment)) {
     return {
       threaded: true,
-      scriptPath: "/emulatorjs/cores/fceumm_thread_libretro.js",
-      wasmPath: "/emulatorjs/cores/fceumm_thread_libretro.wasm",
+      scriptPath: `/emulatorjs/cores/${coreAssetName}_thread_libretro.js`,
+      wasmPath: `/emulatorjs/cores/${coreAssetName}_thread_libretro.wasm`,
     };
   }
   return {
     threaded: false,
-    scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
-    wasmPath: "/emulatorjs/cores/fceumm_libretro.wasm",
+    scriptPath: `/emulatorjs/cores/${coreAssetName}_libretro.js`,
+    wasmPath: `/emulatorjs/cores/${coreAssetName}_libretro.wasm`,
   };
+}
+
+function isValidSnesRom(bytes: Uint8Array): boolean {
+  const copierHeaderSize = bytes.byteLength % 0x8000 === 512 ? 512 : 0;
+  return [0x7fc0, 0xffc0, 0x40ffc0].some((baseOffset) => {
+    const offset = copierHeaderSize + baseOffset;
+    if (offset + 64 > bytes.byteLength) return false;
+    const header = bytes.subarray(offset, offset + 64);
+    const mapMode = header[0x15] & 0x3f;
+    let score = [0x20, 0x21, 0x22, 0x23, 0x25, 0x30, 0x31, 0x32, 0x35].includes(mapMode) ? 2 : 0;
+    const complement = header[0x1c] | (header[0x1d] << 8);
+    const checksum = header[0x1e] | (header[0x1f] << 8);
+    if ((complement ^ checksum) === 0xffff && (complement !== 0 || checksum !== 0)) score += 2;
+    if ((header[0x3c] | (header[0x3d] << 8)) >= 0x8000) score += 2;
+    if (header.subarray(0, 21).filter((byte) => byte === 0 || byte === 0x20 || (byte >= 0x21 && byte <= 0x7e)).length >= 18) score += 1;
+    if (header[0x17] >= 0x08 && header[0x17] <= 0x0f) score += 1;
+    return score >= 4;
+  });
+}
+
+function isValidAtari2600Rom(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 128 && bytes.byteLength <= 1024 * 1024;
+}
+
+function gameExtension(platform: PlatformKey): string {
+  if (platform === "snes") return "sfc";
+  if (platform === "atari2600") return "a26";
+  return "nes";
+}
+
+function platformDisplayName(platform: PlatformKey): string {
+  if (platform === "snes") return "Super Nintendo";
+  if (platform === "atari2600") return "Atari 2600";
+  return "NES";
 }
 
 function isAppleWebKit(environment: {

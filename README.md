@@ -4,14 +4,19 @@
 > limitations below before exposing it beyond the LAN.
 
 This is a working TypeScript/React/Node/SQLite slice of the attached product
-specification. It scans one read-only NES Library Source, builds a controller-friendly
-Nintendo Entertainment System Shelf, resolves a preferred Edition internally, and
-launches it in a pinned, self-hosted EmulatorJS player. No metadata account or player
-emulator choice is required.
+specification. It scans one read-only mixed NES/SNES/Atari 2600 Library Source, builds a
+controller-friendly game catalog, resolves a preferred Edition internally, and launches
+it in a pinned, self-hosted EmulatorJS player. No metadata account or player emulator
+choice is required.
+
+The approved product and technical requirements for the native tvOS client are in
+[`docs/apple-tv-client-spec.md`](docs/apple-tv-client-spec.md).
 
 ## What works
 
-- Recursive, read-only discovery of `.nes` files, with content hashes and filename-based titles.
+- Recursive, read-only discovery of NES `.nes`, SNES `.sfc`/`.smc`/`.snes`, and
+  Atari 2600 `.a26` files. Atari `.bin` files are accepted only beneath an
+  Atari/2600-named folder so other platforms are not misclassified.
   Differently hashed files with the same normalized title are retained as Editions of one Game
   rather than rendered as duplicate Shelf entries.
 - A persistent **Settings → Library** location with server-side directory/readability
@@ -30,23 +35,25 @@ emulator choice is required.
   appearance preferences; the Household profile remains the administrator.
 - Seven bold themes, including an adjustable Portal accent and graphic-heavy
   8-bit/NES/SNES/Genesis/N64/Atari-adjacent treatments.
-- A dedicated **My Library** grid, alphabetized by default, with title, release-year,
-  recently-played, and recently-added sorting.
+- A dedicated **My Library** grid with URL-persistent Platform filtering and title,
+  Platform, release-year, recently-played, and recently-added sorting.
 - Administrator-managed Browse Rows for Favorites, Continue Playing, Recently Played,
   all games, genre rules, or any Collection. Rows can be created, edited, removed, and
   reordered without changing code. Continue entries can be removed per Player Profile
   without deleting Saves, Checkpoints, history, Favorites, or library data.
 - A Featured title that stays stable while a player browses and rotates whenever a
   Player Profile is selected again.
-- Automatic SHA-256 Metadata Matches against a locally cached public NES catalog, with
+- Automatic hash-based Metadata Matches against locally cached public NES and Atari 2600 catalogs, with
   administrator corrections that survive rescans and a persistent same-origin artwork cache.
 - An **Administration** area that keeps Metadata Management intact and displays
   platform-level Emulator Profiles for NES, SNES, and Atari 2600.
-- One-click detail-to-play flow. The Playback Resolver silently selects FCEUmm for NES.
+- One-click detail-to-play flow. The Playback Resolver silently selects FCEUmm for NES,
+  Snes9x for SNES, and Stella 2014 for Atari 2600.
 - Per-profile Keyboard, Joy-Con, Pro Controller, and Apple TV Remote presets. The friendly
   choice is resolved into EmulatorJS controls by the Playback Adapter on the next launch.
-- Adaptive threaded FCEUmm playback when the browser exposes `SharedArrayBuffer`, with
-  a compatible single-thread fallback when cross-origin isolation is unavailable.
+- Adaptive threaded FCEUmm, Snes9x, and Stella 2014 playback when the browser exposes
+  `SharedArrayBuffer`, with compatible single-thread fallbacks when cross-origin
+  isolation is unavailable.
 - Two-minute, random launch URLs that reveal neither the Library Source nor relative file path.
 - EmulatorJS browser persistence through its native **Save State** control plus an
   immutable server Checkpoint generation when the player chooses **Leave player**.
@@ -57,6 +64,13 @@ emulator choice is required.
 - Administrator-triggered rescan detects added or removed files without an image rebuild.
 - `/health` and `/api/health` endpoints.
 - A single production HTTP port, default `8090`.
+- A versioned `/api/v1` native-client contract with stable server identity, six-digit
+  administrator-approved Device Pairing, revocable device credentials, profile-scoped
+  catalogs, Playback Leases, temporary Game File grants, and immutable Checkpoint uploads.
+- Bonjour advertisement as `_homegameportal._tcp.local.` plus manual host/IP and port entry.
+- A native tvOS Xcode project and Swift package under `apple-tv/` covering server setup,
+  pairing, profiles, catalog/detail navigation, physical-controller gating, lease renewal,
+  verified temporary ROM downloads, and durable Checkpoint outbox storage.
 
 ## Local startup
 
@@ -68,7 +82,9 @@ npm ci
 npm run dev
 ```
 
-Set `ROM_LIBRARY_PATH` in `.env` to the initial local NES library. Use a path that is
+Set `ROM_LIBRARY_PATH` in `.env` to the local game library root. NES, SNES, and Atari
+2600 files may be mixed or kept in sibling folders such as `NES/`, `SNES/`, and
+`Atari 2600/`. Use a path that is
 readable by the account running Node, for example:
 
 ```dotenv
@@ -138,7 +154,13 @@ authoritative; migration 007 moves the prototype’s former exact `/library` val
 
 If host port 8090 is occupied, choose another `PORT` in `.env`; the container continues
 to listen internally on 8090. Confirm that the selected port is reachable only from the
-trusted LAN. The application does not provide authentication or HTTPS.
+trusted LAN. Native clients authenticate through Device Pairing; the legacy browser UI
+remains unauthenticated and the default deployment does not provide HTTPS.
+
+Bonjour uses multicast DNS, which ordinary Docker bridge port publishing may not forward
+to the physical LAN. Use a deployment/network configuration that deliberately supports
+mDNS, or enter the Docker host's LAN address and exposed port manually on Apple TV. Set
+`BONJOUR_ENABLED=false` when advertisement is not useful in that environment.
 
 ### Persistence, backup, and upgrades
 
@@ -177,12 +199,13 @@ only the chosen host port. Do not map ROMs into a writable application directory
 
 ## Player flow
 
-1. Add a legally obtained `.nes` file to the mounted Library Source.
+1. Add a legally obtained `.nes`, `.sfc`, `.smc`, `.snes`, or `.a26` file to the mounted
+   Library Source. Put Atari 2600 `.bin` files inside an Atari/2600-named folder.
 2. Select the Household administrator profile, open **Settings → Library**, and press
    **Rescan library**.
-3. Open the game on the NES Shelf, then press **Play**.
+3. Open the game in the catalog, then press **Play**.
 4. Play with the keyboard or connected controller; no emulator selection appears.
-5. Choose **Leave player** to capture a new immutable Checkpoint generation in `/saves`
+5. Choose **Leave player** to capture a new core-compatible, immutable Checkpoint generation in `/saves`
    before navigating back to the Game detail view. EmulatorJS’s **Save State** control
    independently keeps a browser-local fallback.
 6. The Game appears under **Continue Playing**. On the next launch, the Playback
@@ -196,6 +219,11 @@ remapping. **Check controllers** reports devices currently visible to the browse
 
 Presentation controls live under **Settings → Administration → Browse & Collections**.
 Collections are reusable groups of selected Games, and every Collection is editable.
+Browse Rows can combine optional Platform, Genre, and Series filters with any content
+source. Games must match every selected criterion; multiple selected genres match
+any of those genres. For example, choose All games, Atari 2600, and Action for an
+Atari action shelf. Series options come from library metadata.
+
 Browse Rows are independent ordered rules: removing a normal row does not remove its
 Collection, while removing a Collection also removes any row that directly depends on
 it. Neither operation changes Game Files, Saves, Favorites, or play history.
@@ -207,9 +235,26 @@ before the catalog renders again.
 
 The portal never writes to, renames, deletes, or sends a source game to an external
 service. The browser downloads game bytes from this portal because emulation runs in
-the browser. For enrichment, the server downloads the public Retronian NES catalog to
-`DATA_DIR/metadata` and performs hash comparisons locally; ROM bytes, filenames, and
-hashes are not uploaded to Retronian, EmulatorJS, or another metadata provider.
+the browser. For NES enrichment, the server downloads the public Retronian catalog to
+`DATA_DIR/metadata`. For Atari 2600 enrichment, it downloads Libretro's public No-Intro,
+release-year, and genre catalogs plus the OpenVGDB metadata supplement to the same cache.
+Hash and title comparisons happen locally; SNES games use filename metadata until corrected
+by an administrator. ROM bytes, filenames, and hashes are not uploaded to Retronian,
+Libretro, OpenVGDB, EmulatorJS, or another metadata provider.
+
+## Apple TV development
+
+The generated project is [`apple-tv/HomeGamePortalTV.xcodeproj`](apple-tv/HomeGamePortalTV.xcodeproj).
+See [`apple-tv/README.md`](apple-tv/README.md) for Xcode/TestFlight setup and the current
+native FCEUmm release gate. The checked-in native wire contract is
+[`docs/openapi-v1.yaml`](docs/openapi-v1.yaml).
+The exact implemented-versus-release-blocked inventory is in
+[`docs/apple-tv-build-status.md`](docs/apple-tv-build-status.md).
+
+The Portal Server advertises the candidate shared FCEUmm Checkpoint Format as
+`provisional`. The exact source provenance of the existing EmulatorJS-produced WebAssembly
+core must be proven and its state format tested in both directions before a TestFlight
+build can honestly claim web↔Apple TV resume compatibility.
 
 ## Verification
 
@@ -230,16 +275,15 @@ The suite also covers Collection materialization and persistence, Collection-bac
 resolution, default row seeding without title-specific shelves, row ordering validation,
 and Featured-title selection.
 
-For a real playback check, follow the player flow with a legal `.nes` file and confirm
-that the game produces video/input, a saved state survives a browser restart, and a
-new file appears after rescan. No ROM is checked into this repository.
+For a real playback check, follow the player flow with legal NES, SNES, and Atari 2600
+files and confirm that all three produce video/input, each saved state survives a browser restart, and
+new files appear after rescan. No ROM is checked into this repository.
 
 ## Assumptions and known limitations
 
 - One configured Library Source and one preferred Edition per Game remain intentional
-  current limits. NES playback is enabled; SNES and Atari 2600 Emulator Profiles are
-  visible but deliberately disabled until their scanners, adapters, and save behavior
-  are implemented and verified.
+  current limits. Browser playback is enabled for NES, SNES, and Atari 2600. The current
+  native tvOS contract remains NES-only.
 - Player Profiles are household-local and not authenticated. Selecting the Household
   administrator profile grants Metadata Match controls, so this build must remain on a
   trusted LAN until profile PINs or another authorization layer exists.
@@ -251,18 +295,26 @@ new file appears after rescan. No ROM is checked into this repository.
 - Controller presets configure documented EmulatorJS defaults before startup. A browser
   may expose a particular Joy-Con orientation or third-party controller differently, so
   its built-in Control Settings screen is the fallback for unusual mappings.
+- Mobile startup honors the Virtual Gamepad setting without requiring a toggle.
+  Gameplay taps resume suspended browser audio, including after an interruption;
+  volume and mute settings remain under the player's control. Audio may require
+  the first tap after the game finishes loading.
 - The Apple TV Remote preset can supply directional and action keys only where a browser
   or TV WebView exposes remote presses as keyboard-like events. A normal Safari page
   cannot make the remote appear as a standard web Gamepad.
 - The ten profile avatars are an original, generated pixel-art sprite sheet stored with
   the application. They contain no console logos or copyrighted game characters.
-- Filename parsing strips common release/region tags. The original versioned, local NES
+- Filename parsing strips common release/region tags across all three platforms. The original versioned, local NES
   catalog is the preferred automatic source for its covered titles, using normalized
   matching so punctuation and article variants resolve deterministically. On rescan,
   SHA-256 values are also matched locally against the cached Retronian catalog for
   artwork and as enrichment fallback for previously uncurated titles. Administrator
   corrections always take precedence and can be opened from a Game detail page or
   **Settings → Administration → Metadata Management** without modifying a Game File.
+  Atari 2600 files are SHA-1 matched locally against Libretro's current No-Intro catalog;
+  Libretro and OpenVGDB supply canonical titles, release years, genres, descriptions, and
+  canonical box-art names. SNES titles continue to use platform-correct filename defaults
+  and artwork lookup until a dedicated provider or administrator correction supplies richer details.
 - Collections and Browse Rows are household-wide administrator configuration.
   Personal row content such as Continue Playing, Favorites, and Recently Played is
   resolved separately for the active Player Profile; empty rows remain hidden.
@@ -273,10 +325,11 @@ new file appears after rescan. No ROM is checked into this repository.
 - Artwork is fetched from its configured HTTPS source on first request and cached in
   `ARTWORK_DIR`. If a cache fetch fails, the endpoint temporarily redirects to the
   source, so uncached art can still require internet access.
-- The first metadata-enabled scan downloads roughly 6 MB from Retronian and caches it in
-  `DATA_DIR/metadata`. If that download is unavailable, scanning still succeeds with the
-  local fallback; a later rescan retries. Archive scanning and firmware handling remain
-  out of scope.
+- The first scan containing NES files downloads roughly 6 MB from Retronian. The first Atari
+  scan downloads the small Libretro catalogs plus OpenVGDB's roughly 9 MB compressed database.
+  All catalogs are cached in `DATA_DIR/metadata`; OpenVGDB occupies roughly 42 MB after extraction.
+  If a provider is unavailable, scanning still succeeds with the available local fallback and
+  a later rescan retries. Archive scanning and firmware handling remain out of scope.
 - Server persistence covers Checkpoints created by **Leave player**. Leave-time capture
   uses the pinned EmulatorJS runtime's `gameManager.getState()` method behind the
   Playback Adapter; this private compatibility point must be reverified before upgrading
@@ -305,7 +358,7 @@ new file appears after rescan. No ROM is checked into this repository.
   eventually need incremental/background job controls.
 - The built-in Node 22 `node:sqlite` API is used to keep the container small. It emits
   an experimental warning on Node 22 but stores a standard SQLite database.
-- The pinned FCEUmm release files are repackaged from the upstream 7z archive into an
+- The pinned FCEUmm, Snes9x, and Stella 2014 release files are repackaged from their upstream 7z archives into
   otherwise identical ZIP. Both compatible and threaded JavaScript/WASM runtimes are
   resolved directly by the adapter because the tested browser's archive worker dropped
   the WASM payload. This is an adapter-local compatibility measure; checksums and the
@@ -322,13 +375,14 @@ new file appears after rescan. No ROM is checked into this repository.
 `Platform` identifies the system and an emulation capability; it does not name a core.
 An `EmulatorProfile` stores the automatic playback policy once per Platform and may
 contain client-specific runtime configuration. The current web configuration resolves
-NES to EmulatorJS/FCEUmm, and the browser Playback Adapter translates that resolved fact
-into EmulatorJS globals.
+NES to EmulatorJS/FCEUmm, SNES to EmulatorJS/Snes9x, and Atari 2600 to
+EmulatorJS/Stella 2014; the browser Playback Adapter translates each resolved fact into
+EmulatorJS globals.
 
 The server launch manifest carries Platform identity and Emulator Profile policy
 separately from its web-only runtime fields. A future native Apple TV client can use the
 same Platform capability while supplying its own native Playback Adapter and compatible
-core. It is not required to embed EmulatorJS or honor the browser’s FCEUmm implementation.
+core. It is not required to embed EmulatorJS or honor either browser core implementation.
 This decision is recorded in `docs/adr/0001-client-specific-emulator-adapters.md`;
 runtime-scoped Checkpoint generations are recorded in
 `docs/adr/0002-version-and-scope-checkpoints-by-runtime.md`.
@@ -343,18 +397,18 @@ leave-time capture call is contained behind `EmulatorJsPlaybackAdapter` and
 `ResumeCoordinator`, preserving the seam for a future supported synchronization adapter.
 
 The `/artwork` volume is now implemented for the persistent artwork cache. `/firmware`
-remains omitted because this NES-only slice does not use firmware.
+remains omitted because the supported browser cores do not require it.
 
 The original no-metadata-provider constraint was intentionally superseded by later
-product iterations. Retronian metadata is downloaded and cached server-side, matching
-occurs locally, and reviewed HTTPS artwork is cached on first access. This keeps Game
-Files and their identifiers private while making newly discovered titles enrichable.
+product iterations. Retronian, Libretro, and OpenVGDB metadata is downloaded and cached
+server-side, matching occurs locally, and reviewed HTTPS artwork is cached on first access.
+This keeps Game Files and their identifiers private while making newly discovered titles enrichable.
 
 Milestone 2 is complete for the current application: search, Collections, Favorites, Play
 Sessions, selectable Player Profiles, profile-scoped Saves and appearance, administrator
 Metadata Match corrections, automatic provider matching, and persistent artwork caching
 are functional. Profile authentication remains hardening/future-scope work.
 
-This iteration adds the server-configuration and Emulator Profile foundation for
-Milestone 3. It does not claim full Milestone 3 completion: additional Platform scanners,
-firmware management, web Playback Adapters, and native-client implementations remain.
+This iteration extends the server configuration and Emulator Profile foundation with
+SNES and Atari 2600 browser playback. It does not claim full Milestone 3 completion: additional
+platforms, firmware management, and native-client implementations remain.

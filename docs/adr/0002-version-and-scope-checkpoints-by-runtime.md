@@ -1,5 +1,7 @@
 # Version and scope checkpoints by client runtime
 
+> Refined by ADR 0003: compatibility is now expressed by a client-neutral Checkpoint Format rather than by Playback Adapter identity.
+
 The Portal stores each Checkpoint as an immutable generation associated with the Player Profile, Edition, Game File content hash, Playback Adapter, core key, and pinned runtime version. A newly captured generation is a candidate; a client promotes it after a successful restore. Failed candidates are rejected and the client tries the next compatible generation. The server retains the three newest restorable generations and never overwrites the last-known-good file in place.
 
 Checkpoint bytes are opaque and runtime-specific. An EmulatorJS/FCEUmm Checkpoint is not assumed to be loadable by another web runtime or a future native Apple TV Playback Adapter. A future client can create its own separately keyed generations while sharing Platform, Game, Edition, and Player Profile identity. Battery-backed save RAM remains a separate future synchronization concern because it may have different portability guarantees.

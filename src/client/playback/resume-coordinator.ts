@@ -48,6 +48,7 @@ export class ResumeCoordinator {
     const gameManager = await this.waitForGameManager(getGameManager, isCancelled);
     if (!gameManager) return { status: "fresh" };
 
+    let preservedFailure: Error | null = null;
     for (const [index, checkpoint] of plan.checkpoints.entries()) {
       if (isCancelled()) return { status: "fresh" };
       try {
@@ -62,7 +63,8 @@ export class ResumeCoordinator {
         return { status: "restored", checkpointId: checkpoint.id, generation: checkpoint.generation };
       } catch (error) {
         const reason = error instanceof Error ? error.message : "Checkpoint could not be restored.";
-        await this.transport.reject(checkpoint, reason).catch(() => undefined);
+        if (checkpoint.preserveOnFailure) preservedFailure = new Error(reason);
+        else await this.transport.reject(checkpoint, reason).catch(() => undefined);
         // A semantically bad state can leave the core unable to advance. Give
         // the next rollback generation a clean runtime instead of loading it
         // into the already-poisoned core.
@@ -73,6 +75,7 @@ export class ResumeCoordinator {
     }
 
     await this.restartCore(gameManager, isCancelled);
+    if (preservedFailure) throw new Error("That saved state could not be loaded. It has been kept so you can try again.", { cause: preservedFailure });
     return { status: "fresh" };
   }
 
