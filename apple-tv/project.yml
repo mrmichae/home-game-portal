@@ -1,0 +1,117 @@
+name: HomeGamePortalTV
+options:
+  bundleIdPrefix: com.homegameportal
+  deploymentTarget:
+    tvOS: "18.0"
+  xcodeVersion: "16.0"
+packages:
+  HomeGamePortalCore:
+    path: .
+targets:
+  HomeGamePortalTV:
+    type: application
+    platform: tvOS
+    sources:
+      - App
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Home Game Portal
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.games
+        NSLocalNetworkUsageDescription: Home Game Portal finds your private game server and downloads games for temporary local play on this Apple TV.
+        NSBonjourServices:
+          - _homegameportal._tcp
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIRequiresFullScreen: true
+        UIRequiredDeviceCapabilities:
+          - arm64
+    entitlements:
+      path: App/HomeGamePortalTV.entitlements
+    dependencies:
+      - package: HomeGamePortalCore
+        product: PortalCore
+      - target: FCEUmmCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.homegameportal.tv
+        PRODUCT_NAME: Home Game Portal
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: 6.0
+        TARGETED_DEVICE_FAMILY: 3
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        CODE_SIGN_STYLE: Automatic
+  FCEUmmCore:
+    type: library.static
+    platform: tvOS
+    sources:
+      - NativeCore
+      - ../vendor/fceumm/source/src/boards
+      - ../vendor/fceumm/source/src/input
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro.c
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro_dipswitch.c
+      - ../vendor/fceumm/source/src/cart.c
+      - ../vendor/fceumm/source/src/cheat.c
+      - ../vendor/fceumm/source/src/crc32.c
+      - ../vendor/fceumm/source/src/fceu-endian.c
+      - ../vendor/fceumm/source/src/fceu-memory.c
+      - ../vendor/fceumm/source/src/fceu.c
+      - ../vendor/fceumm/source/src/fds.c
+      - ../vendor/fceumm/source/src/fds_apu.c
+      - ../vendor/fceumm/source/src/file.c
+      - ../vendor/fceumm/source/src/filter.c
+      - ../vendor/fceumm/source/src/general.c
+      - ../vendor/fceumm/source/src/input.c
+      - ../vendor/fceumm/source/src/md5.c
+      - ../vendor/fceumm/source/src/nsf.c
+      - ../vendor/fceumm/source/src/palette.c
+      - ../vendor/fceumm/source/src/ppu.c
+      - ../vendor/fceumm/source/src/sound.c
+      - ../vendor/fceumm/source/src/state.c
+      - ../vendor/fceumm/source/src/video.c
+      - ../vendor/fceumm/source/src/vsuni.c
+      - ../vendor/fceumm/source/src/ines.c
+      - ../vendor/fceumm/source/src/unif.c
+      - ../vendor/fceumm/source/src/x6502.c
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/compat
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/encodings
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/file
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/streams
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/string
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/time
+      - ../vendor/fceumm/source/src/drivers/libretro/libretro-common/vfs
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.homegameportal.fceumm
+        PRODUCT_MODULE_NAME: FCEUmmCore
+        DEFINES_MODULE: YES
+        MODULEMAP_FILE: $(SRCROOT)/NativeCore/include/module.modulemap
+        PUBLIC_HEADERS_FOLDER_PATH: include
+        GCC_C_LANGUAGE_STANDARD: gnu11
+        GCC_PREPROCESSOR_DEFINITIONS: $(inherited) __LIBRETRO__ PATH_MAX=1024 FCEU_VERSION_NUMERIC=9813 FRONTEND_SUPPORTS_RGB565 IOS
+        HEADER_SEARCH_PATHS: $(inherited) $(SRCROOT)/NativeCore/include $(SRCROOT)/../vendor/fceumm/source/src $(SRCROOT)/../vendor/fceumm/source/src/input $(SRCROOT)/../vendor/fceumm/source/src/boards $(SRCROOT)/../vendor/fceumm/source/src/drivers/libretro $(SRCROOT)/../vendor/fceumm/source/src/drivers/libretro/libretro-common/include
+        SKIP_INSTALL: YES
+  PortalCoreTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - Tests
+    dependencies:
+      - package: HomeGamePortalCore
+        product: PortalCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.homegameportal.tv.tests
+        SWIFT_VERSION: 6.0
+schemes:
+  HomeGamePortalTV:
+    build:
+      targets:
+        HomeGamePortalTV: all
+        PortalCoreTests: [test]
+    test:
+      targets:
+        - PortalCoreTests

@@ -89,6 +89,14 @@ export interface GameDetail extends GameSummary {
   artworkSourceUrl: string;
 }
 
+export interface SavedState {
+  id: string;
+  label: string | null;
+  capturedFrame: number;
+  createdAt: string;
+  thumbnailUrl: string | null;
+}
+
 export interface CatalogCollection {
   id: string;
   slug: string;
@@ -180,11 +188,13 @@ export interface LaunchManifest {
   };
   gameUrl: string;
   resumePlan: ResumePlan;
+  savedStateCaptureUrl: string;
   controllerPreset: ControllerPresetKey;
   playerProfileKey: string;
 }
 
 export const WEB_CHECKPOINT_COMPATIBILITY = {
+  formatKey: "fceumm:emulatorjs-4.2.3-core:state-v1:default-options",
   adapterKey: "emulatorjs",
   coreKey: "fceumm",
   // portal.2 checkpoints may have been promoted after only one advancing
@@ -194,12 +204,14 @@ export const WEB_CHECKPOINT_COMPATIBILITY = {
 } as const;
 
 export const SNES_WEB_CHECKPOINT_COMPATIBILITY = {
+  formatKey: "snes9x:emulatorjs-4.2.3-core:state-v1:default-options",
   adapterKey: "emulatorjs",
   coreKey: "snes9x",
   runtimeVersion: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
 } as const;
 
 export const ATARI_2600_WEB_CHECKPOINT_COMPATIBILITY = {
+  formatKey: "stella2014:emulatorjs-4.2.3-core:state-v1:default-options",
   adapterKey: "emulatorjs",
   coreKey: "stella2014",
   runtimeVersion: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
@@ -211,7 +223,15 @@ export function webCheckpointCompatibility(coreKey: WebCoreKey): CheckpointCompa
   return WEB_CHECKPOINT_COMPATIBILITY;
 }
 
+export const NATIVE_CHECKPOINT_COMPATIBILITY = {
+  formatKey: WEB_CHECKPOINT_COMPATIBILITY.formatKey,
+  adapterKey: "tvos-libretro",
+  coreKey: "fceumm",
+  runtimeVersion: "source-pin-pending",
+} as const;
 export interface CheckpointCompatibility {
+  /** Stable wire/storage identity. Older callers may omit it. */
+  formatKey?: string;
   adapterKey: string;
   coreKey: string;
   runtimeVersion: string;
@@ -225,6 +245,7 @@ export interface ResumeCheckpoint {
   stateUrl: string;
   verifyUrl: string;
   rejectUrl: string;
+  preserveOnFailure?: boolean;
 }
 
 export interface ResumePlan {

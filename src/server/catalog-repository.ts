@@ -10,7 +10,6 @@ import type {
   EmulatorProfile,
   PlatformKey,
 } from "../domain/types.js";
-import { WEB_CHECKPOINT_COMPATIBILITY } from "../domain/types.js";
 import type { PortalDatabase } from "./database.js";
 import { hasCuratedMetadata, metadataForGame } from "./nes-metadata.js";
 import { isProfileAvatarKey, profileAvatarChoice, type ProfileAvatarKey } from "../domain/profile-avatars.js";
@@ -55,12 +54,14 @@ interface PlaybackSourceRow {
   relative_path: string;
   edition_id: string;
   content_hash: string;
+  byte_size: number;
 }
 
 export interface PlaybackSourceRecord {
   relativePath: string;
   editionId: string;
   contentHash: string;
+  byteSize: number;
 }
 
 export interface ScanCommitResult {
@@ -83,7 +84,7 @@ export class CatalogRepository {
       .prepare(
         `INSERT INTO library_sources(id, name, root_path, platform_key)
          VALUES (?, ?, ?, 'nes')
-         ON CONFLICT(id) DO NOTHING`,
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
       )
       .run(SOURCE_ID, "Game Library", rootPath);
   }
@@ -146,8 +147,8 @@ export class CatalogRepository {
         .run(SOURCE_ID);
 
       for (const file of files) {
-        if (!existingStatement.get(SOURCE_ID, file.relativePath)) added += 1;
         const platform = file.platform ?? platformForRelativePath(file.relativePath);
+        if (!existingStatement.get(SOURCE_ID, file.relativePath)) added += 1;
         const prior = this.database.prepare(`
           SELECT editions.game_id, games.added_at
           FROM game_files
@@ -155,9 +156,9 @@ export class CatalogRepository {
           JOIN games ON games.id = editions.game_id
           WHERE game_files.library_source_id = ? AND game_files.relative_path = ?
         `).get(SOURCE_ID, file.relativePath) as unknown as { game_id: string; added_at: string } | undefined;
-        // Preserve historical NES identifiers so existing progress and favorites stay
-        // attached. New platforms include their identity to avoid cross-platform merges.
         const gameId = stableId("game", `${platform}\0${gameIdentityKey(file.displayName)}`);
+        // Preserve every existing NES Edition identifier so upgrades retain Saves,
+        // Checkpoints, history, and Favorites. New platforms namespace their hashes.
         const editionId = stableId("edition", platform === "nes" ? file.contentHash : `${platform}\0${file.contentHash}`);
         const fileId = stableId("file", `${SOURCE_ID}\0${file.relativePath}`);
         upsertGame.run(gameId, file.displayName, now, now);
@@ -305,9 +306,6 @@ export class CatalogRepository {
              FROM save_checkpoints AS checkpoint
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
-               AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
-               AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
            EXISTS (
@@ -356,9 +354,6 @@ export class CatalogRepository {
              SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
-               AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = CASE candidate.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
-               AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
@@ -376,10 +371,6 @@ export class CatalogRepository {
       )
       .all({
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $snesCore: "snes9x",
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as GameRow[];
     return rows.map(toGameSummary);
   }
@@ -400,9 +391,6 @@ export class CatalogRepository {
              FROM save_checkpoints AS checkpoint
              WHERE checkpoint.edition_id = editions.id
                AND checkpoint.player_key = $player
-               AND checkpoint.adapter_key = $adapter
-               AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
-               AND checkpoint.runtime_version = $runtime
                AND checkpoint.status IN ('candidate', 'verified')
            ) AS save_updated_at,
            EXISTS (
@@ -451,9 +439,6 @@ export class CatalogRepository {
              SELECT MAX(candidate_checkpoint.created_at) FROM save_checkpoints AS candidate_checkpoint
              WHERE candidate_checkpoint.edition_id = candidate.id
                AND candidate_checkpoint.player_key = $player
-               AND candidate_checkpoint.adapter_key = $adapter
-               AND candidate_checkpoint.core_key = CASE candidate.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
-               AND candidate_checkpoint.runtime_version = $runtime
                AND candidate_checkpoint.status IN ('candidate', 'verified')
            ) DESC, candidate.preferred DESC, candidate.id
            LIMIT 1
@@ -470,10 +455,6 @@ export class CatalogRepository {
       )
       .get({
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $snesCore: "snes9x",
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
         $game: gameId,
       }) as unknown as GameRow | undefined;
     if (!row) return null;
@@ -487,7 +468,7 @@ export class CatalogRepository {
   getPlaybackSource(gameId: string, playerKey = DEFAULT_PLAYER_KEY): PlaybackSourceRecord | null {
     const row = this.database
       .prepare(
-        `SELECT game_files.relative_path, editions.id AS edition_id, game_files.content_hash
+        `SELECT game_files.relative_path, editions.id AS edition_id, game_files.content_hash, game_files.byte_size
          FROM games
          JOIN editions ON editions.game_id = games.id
            AND editions.active = 1
@@ -502,9 +483,6 @@ export class CatalogRepository {
            SELECT MAX(checkpoint.created_at) FROM save_checkpoints AS checkpoint
            WHERE checkpoint.edition_id = editions.id
              AND checkpoint.player_key = $player
-             AND checkpoint.adapter_key = $adapter
-             AND checkpoint.core_key = CASE editions.platform_key WHEN 'snes' THEN $snesCore ELSE $nesCore END
-             AND checkpoint.runtime_version = $runtime
              AND checkpoint.status IN ('candidate', 'verified')
          ) DESC, editions.preferred DESC, game_files.relative_path
          LIMIT 1`,
@@ -512,12 +490,13 @@ export class CatalogRepository {
       .get({
         $game: gameId,
         $player: playerKey,
-        $adapter: WEB_CHECKPOINT_COMPATIBILITY.adapterKey,
-        $nesCore: WEB_CHECKPOINT_COMPATIBILITY.coreKey,
-        $snesCore: "snes9x",
-        $runtime: WEB_CHECKPOINT_COMPATIBILITY.runtimeVersion,
       }) as unknown as PlaybackSourceRow | undefined;
-    return row ? { relativePath: row.relative_path, editionId: row.edition_id, contentHash: row.content_hash } : null;
+    return row ? {
+      relativePath: row.relative_path,
+      editionId: row.edition_id,
+      contentHash: row.content_hash,
+      byteSize: row.byte_size,
+    } : null;
   }
 
   getLibraryRoot(): string {

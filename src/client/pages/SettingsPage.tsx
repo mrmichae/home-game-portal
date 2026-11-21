@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { AdministrationSettings, ControllerPresetKey, EmulatorProfile } from "../../domain/types";
-import { api } from "../api";
+import { api, type ClientDevice, type PendingDevicePairing } from "../api";
 import { PortalHeader } from "../components";
 import { usePlayerProfile } from "../player-profile";
 import { themeChoices, useTheme } from "../theme";
@@ -31,6 +31,10 @@ export function SettingsPage(): React.JSX.Element {
   const [administrationStatusKind, setAdministrationStatusKind] = useState<"success" | "error">("success");
   const [savingLibrary, setSavingLibrary] = useState(false);
   const [rescanning, setRescanning] = useState(false);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pendingPairings, setPendingPairings] = useState<PendingDevicePairing[]>([]);
+  const [clientDevices, setClientDevices] = useState<ClientDevice[]>([]);
+  const [deviceStatus, setDeviceStatus] = useState("");
   const updateAccent = (value: string) => setAccent(value);
   useEffect(() => {
     if (!activeProfile?.isAdministrator) {
@@ -47,6 +51,49 @@ export function SettingsPage(): React.JSX.Element {
         setAdministrationStatus(error instanceof Error ? error.message : "Administration settings could not be loaded.");
       });
   }, [activeProfile?.key, activeProfile?.isAdministrator]);
+  useEffect(() => {
+    if (!activeProfile?.isAdministrator) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const [pairingResponse, deviceResponse] = await Promise.all([api.devicePairings(), api.clientDevices()]);
+        if (!cancelled) {
+          setPendingPairings(pairingResponse.pairings);
+          setClientDevices(deviceResponse.devices);
+        }
+      } catch (error) {
+        if (!cancelled) setDeviceStatus(error instanceof Error ? error.message : "Client Devices could not be loaded.");
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [activeProfile?.key, activeProfile?.isAdministrator]);
+  const approvePairing = async (event: FormEvent) => {
+    event.preventDefault();
+    setDeviceStatus("");
+    try {
+      const { device } = await api.approveDevicePairing(pairingCode);
+      setPairingCode("");
+      setDeviceStatus(`${device.displayName} is now paired.`);
+      const [pairingResponse, deviceResponse] = await Promise.all([api.devicePairings(), api.clientDevices()]);
+      setPendingPairings(pairingResponse.pairings);
+      setClientDevices(deviceResponse.devices);
+    } catch (error) {
+      setDeviceStatus(error instanceof Error ? error.message : "Pairing could not be approved.");
+    }
+  };
+  const denyPairing = async (pairingId: string) => {
+    await api.denyDevicePairing(pairingId);
+    setPendingPairings((current) => current.filter((pairing) => pairing.id !== pairingId));
+    setDeviceStatus("Pairing request denied.");
+  };
+  const revokeDevice = async (device: ClientDevice) => {
+    if (!window.confirm(`Revoke ${device.displayName}? It will need to pair again.`)) return;
+    await api.revokeClientDevice(device.id);
+    setClientDevices((current) => current.map((item) => item.id === device.id ? { ...item, revokedAt: new Date().toISOString() } : item));
+    setDeviceStatus(`${device.displayName} was revoked.`);
+  };
   const chooseController = async (controllerPreset: ControllerPresetKey) => {
     setSavingController(controllerPreset);
     setControllerStatus("");
@@ -128,6 +175,16 @@ export function SettingsPage(): React.JSX.Element {
         <p className="settings-message" role="status" aria-live="polite">{controllerStatus}</p>
       </section>
       {activeProfile?.isAdministrator && <>
+        <section className="settings-panel device-settings" id="client-devices" aria-labelledby="client-devices-heading">
+          <div className="settings-section-title"><div><p>Apple TV access</p><h2 id="client-devices-heading">Client Devices</h2></div><span>Administrator approval required</span></div>
+          <form className="device-pairing-form" onSubmit={(event) => void approvePairing(event)}>
+            <label htmlFor="device-pairing-code"><span>Code shown on Apple TV</span><input id="device-pairing-code" inputMode="numeric" autoComplete="one-time-code" value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="123 456" required data-controller-target /></label>
+            <button className="stream-button primary" type="submit" data-controller-target>Approve pairing</button>
+          </form>
+          {pendingPairings.length > 0 && <div className="device-list"><h3>Waiting for approval</h3>{pendingPairings.map((pairing) => <article key={pairing.id}><div><strong>{pairing.deviceName}</strong><small>App {pairing.appVersion} · expires {formatSettingsDate(pairing.expiresAt)}</small></div><button className="stream-button secondary" type="button" onClick={() => void denyPairing(pairing.id)} data-controller-target>Deny</button></article>)}</div>}
+          <div className="device-list"><h3>Paired devices</h3>{clientDevices.length === 0 ? <p>No Client Devices have been paired.</p> : clientDevices.map((device) => <article key={device.id} className={device.revokedAt ? "revoked" : ""}><div><strong>{device.displayName}</strong><small>App {device.appVersion} · {device.revokedAt ? `revoked ${formatSettingsDate(device.revokedAt)}` : device.lastUsedAt ? `last used ${formatSettingsDate(device.lastUsedAt)}` : "not used yet"}</small></div>{!device.revokedAt && <button className="stream-button secondary" type="button" onClick={() => void revokeDevice(device)} data-controller-target>Revoke</button>}</article>)}</div>
+          <p className="settings-message" role="status" aria-live="polite">{deviceStatus}</p>
+        </section>
         <section className="settings-panel library-settings" id="library" aria-labelledby="library-heading">
           <div className="settings-section-title"><div><p>Server library</p><h2 id="library-heading">Library</h2></div><span>Read-only discovery</span></div>
           {administration ? <>

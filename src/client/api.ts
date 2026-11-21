@@ -1,4 +1,4 @@
-import type { AdministrationSettings, BrowseRowDefinition, BrowseRowInput, CatalogPresentation, CollectionDefinition, CollectionInput, ControllerPresetKey, GameDetail, GameSummary, LaunchManifest, LibrarySourceConfiguration, MetadataCorrectionInput, PlayerProfile, PresentationAdministration } from "../domain/types";
+import type { AdministrationSettings, BrowseRowDefinition, BrowseRowInput, CatalogPresentation, CollectionDefinition, CollectionInput, ControllerPresetKey, GameDetail, GameSummary, LaunchManifest, LibrarySourceConfiguration, MetadataCorrectionInput, PlayerProfile, PresentationAdministration, SavedState } from "../domain/types";
 import type { ProfileAvatarKey } from "../domain/profile-avatars";
 import { readActiveProfileKey } from "./profile-storage";
 
@@ -14,6 +14,23 @@ export interface CatalogResponse {
     message: string | null;
   };
   presentation: CatalogPresentation;
+}
+
+export interface PendingDevicePairing {
+  id: string;
+  deviceName: string;
+  appVersion: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface ClientDevice {
+  id: string;
+  displayName: string;
+  appVersion: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -35,6 +52,11 @@ export const api = {
   updateProfilePreferences: (profileKey: string, themeKey: string, accentColor: string) => request<{ profile: PlayerProfile }>(`/api/player-profiles/${profileKey}/preferences`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ themeKey, accentColor }) }),
   updateProfileController: (profileKey: string, controllerPreset: ControllerPresetKey) => request<{ profile: PlayerProfile }>(`/api/player-profiles/${profileKey}/controller`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ controllerPreset }) }),
   administrationSettings: () => request<AdministrationSettings>("/api/admin/settings"),
+  devicePairings: () => request<{ pairings: PendingDevicePairing[] }>("/api/admin/device-pairings"),
+  clientDevices: () => request<{ devices: ClientDevice[] }>("/api/admin/client-devices"),
+  approveDevicePairing: (code: string) => request<{ device: ClientDevice }>("/api/admin/device-pairings/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }),
+  denyDevicePairing: (pairingId: string) => request<void>(`/api/admin/device-pairings/${pairingId}/deny`, { method: "POST" }),
+  revokeClientDevice: (deviceId: string) => request<void>(`/api/admin/client-devices/${deviceId}`, { method: "DELETE" }),
   presentationAdministration: () => request<PresentationAdministration>("/api/admin/presentation"),
   createCollection: (input: CollectionInput) => request<{ collection: CollectionDefinition }>("/api/admin/collections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
   updateCollection: (collectionId: string, input: CollectionInput) => request<{ collection: CollectionDefinition }>(`/api/admin/collections/${collectionId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
@@ -58,8 +80,34 @@ export const api = {
     }),
   removeFromContinuePlaying: (gameId: string) =>
     request<{ game: GameDetail }>(`/api/games/${gameId}/continue-playing`, { method: "DELETE" }),
-  launch: (gameId: string) =>
-    request<{ manifest: LaunchManifest }>(`/api/games/${gameId}/launch`, { method: "POST" }),
+  launch: (gameId: string, savedStateId?: string | null) =>
+    request<{ manifest: LaunchManifest }>(`/api/games/${gameId}/launch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(savedStateId ? { savedStateId } : {}),
+    }),
+  savedStates: (gameId: string) => request<{ savedStates: SavedState[] }>(`/api/games/${gameId}/saved-states`),
+  createSavedState: async (captureUrl: string, state: Uint8Array, capturedFrame: number, thumbnail: Blob | null) => {
+    const result = await request<{ savedState: SavedState }>(captureUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", "X-Captured-Frame": String(capturedFrame) },
+      body: state.slice().buffer as ArrayBuffer,
+    });
+    if (thumbnail) {
+      await request<{ savedState: SavedState }>(`${captureUrl.split("?")[0]}/${result.savedState.id}/thumbnail`, {
+        method: "PUT",
+        headers: { "Content-Type": thumbnail.type || "image/webp" },
+        body: thumbnail,
+      }).catch(() => undefined);
+    }
+    return result.savedState;
+  },
+  renameSavedState: (gameId: string, savedStateId: string, label: string) =>
+    request<{ savedState: SavedState }>(`/api/games/${gameId}/saved-states/${savedStateId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label }),
+    }),
+  deleteSavedState: (gameId: string, savedStateId: string) =>
+    request<void>(`/api/games/${gameId}/saved-states/${savedStateId}`, { method: "DELETE" }),
   correctMetadata: (gameId: string, correction: MetadataCorrectionInput) => request<{ game: GameDetail }>(`/api/admin/games/${gameId}/metadata`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(correction) }),
   resetMetadata: (gameId: string) => request<{ game: GameDetail }>(`/api/admin/games/${gameId}/metadata`, { method: "DELETE" }),
 };

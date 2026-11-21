@@ -248,6 +248,32 @@ describe("runtime selection", () => {
       scriptPath: "/emulatorjs/cores/fceumm_libretro.js",
     });
   });
+  it("selects the matching Snes9x runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/snes9x_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "snes9x")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/snes9x_libretro.js",
+      wasmPath: "/emulatorjs/cores/snes9x_libretro.wasm",
+    });
+  });
+
+  it("selects the matching Stella 2014 runtime without changing the isolation policy", () => {
+    expect(selectRuntimeProfile({ crossOriginIsolated: true, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: true,
+      scriptPath: "/emulatorjs/cores/stella2014_thread_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_thread_libretro.wasm",
+    });
+    expect(selectRuntimeProfile({ crossOriginIsolated: false, hasSharedArrayBuffer: true }, "stella2014")).toMatchObject({
+      threaded: false,
+      scriptPath: "/emulatorjs/cores/stella2014_libretro.js",
+      wasmPath: "/emulatorjs/cores/stella2014_libretro.wasm",
+    });
+  });
+
   it("avoids the threaded WebAssembly runtime in Safari on macOS and iOS", () => {
     const macSafari = {
       crossOriginIsolated: true,

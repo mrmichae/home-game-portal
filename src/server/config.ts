@@ -6,6 +6,8 @@ export const APPLICATION_ROOT = fileURLToPath(new URL("../..", import.meta.url))
 export interface AppConfig {
   host: string;
   port: number;
+  portalName?: string;
+  bonjourEnabled?: boolean;
   defaultLibraryRoot: string;
   dataDir: string;
   savesDir: string;
@@ -20,6 +22,8 @@ export function loadConfig(applicationRoot = APPLICATION_ROOT): AppConfig {
   return {
     host: process.env.HOST ?? "0.0.0.0",
     port: parsePort(process.env.PORT),
+    portalName: process.env.PORTAL_NAME?.trim() || "Home Game Portal",
+    bonjourEnabled: parseBoolean(process.env.BONJOUR_ENABLED, true),
     defaultLibraryRoot: path.resolve(applicationRoot, process.env.ROM_LIBRARY_PATH || process.env.LIBRARY_ROOT || "sample-library"),
     dataDir,
     savesDir: path.resolve(applicationRoot, process.env.SAVES_DIR ?? "runtime/saves"),
@@ -28,6 +32,13 @@ export function loadConfig(applicationRoot = APPLICATION_ROOT): AppConfig {
     publicDir: path.resolve(applicationRoot, "public"),
     clientDir: path.resolve(applicationRoot, "dist/client"),
   };
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === "") return fallback;
+  if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
+  if (["0", "false", "no", "off"].includes(value.toLowerCase())) return false;
+  throw new Error("BONJOUR_ENABLED must be true or false.");
 }
 
 function parsePort(value: string | undefined): number {

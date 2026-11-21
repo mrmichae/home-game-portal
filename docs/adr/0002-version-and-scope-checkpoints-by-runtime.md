@@ -1,5 +1,7 @@
 # Version and scope checkpoints by client runtime
 
+> Refined by ADR 0003: compatibility is now expressed by a client-neutral Checkpoint Format rather than by Playback Adapter identity.
+
 The Portal stores each Checkpoint as an immutable generation associated with the Player Profile, Edition, Game File content hash, Playback Adapter, core key, and pinned runtime version. A newly captured generation is a candidate; a client promotes it after a successful restore. Failed candidates are rejected and the client tries the next compatible generation. The server retains the three newest restorable generations and never overwrites the last-known-good file in place.
 
 For the web client, "successful restore" means sustained emulated-frame progress, not merely a load call or one changing frame. The same health rule gates capture so a stalled runtime cannot replace a good generation. A deliberately paused runtime remains eligible for capture. Runtime versions must change when a prior player policy could have promoted or captured semantically bad states; old generations are preserved but excluded from automatic restore under the new version.

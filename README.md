@@ -9,6 +9,9 @@ controller-friendly game catalog, resolves a preferred Edition internally, and l
 it in a pinned, self-hosted EmulatorJS player. No metadata account or player emulator
 choice is required.
 
+The approved product and technical requirements for the native tvOS client are in
+[`docs/apple-tv-client-spec.md`](docs/apple-tv-client-spec.md).
+
 ## What works
 
 - Recursive, read-only discovery of NES `.nes`, SNES `.sfc`/`.smc`/`.snes`, and
@@ -62,6 +65,13 @@ choice is required.
 - Administrator-triggered rescan detects added or removed files without an image rebuild.
 - `/health` and `/api/health` endpoints.
 - A single production HTTP port, default `8090`.
+- A versioned `/api/v1` native-client contract with stable server identity, six-digit
+  administrator-approved Device Pairing, revocable device credentials, profile-scoped
+  catalogs, Playback Leases, temporary Game File grants, and immutable Checkpoint uploads.
+- Bonjour advertisement as `_homegameportal._tcp.local.` plus manual host/IP and port entry.
+- A native tvOS Xcode project and Swift package under `apple-tv/` covering server setup,
+  pairing, profiles, catalog/detail navigation, physical-controller gating, lease renewal,
+  verified temporary ROM downloads, and durable Checkpoint outbox storage.
 
 ## Local startup
 
@@ -145,7 +155,13 @@ authoritative; migration 007 moves the prototype’s former exact `/library` val
 
 If host port 8090 is occupied, choose another `PORT` in `.env`; the container continues
 to listen internally on 8090. Confirm that the selected port is reachable only from the
-trusted LAN. The application does not provide authentication or HTTPS.
+trusted LAN. Native clients authenticate through Device Pairing; the legacy browser UI
+remains unauthenticated and the default deployment does not provide HTTPS.
+
+Bonjour uses multicast DNS, which ordinary Docker bridge port publishing may not forward
+to the physical LAN. Use a deployment/network configuration that deliberately supports
+mDNS, or enter the Docker host's LAN address and exposed port manually on Apple TV. Set
+`BONJOUR_ENABLED=false` when advertisement is not useful in that environment.
 
 ### Persistence, backup, and upgrades
 
@@ -190,7 +206,7 @@ only the chosen host port. Do not map ROMs into a writable application directory
    **Rescan library**.
 3. Open the game in the catalog, then press **Play**.
 4. Play with the keyboard or connected controller; no emulator selection appears.
-5. Choose **Leave player** to capture a new immutable Checkpoint generation in `/saves`
+5. Choose **Leave player** to capture a new core-compatible, immutable Checkpoint generation in `/saves`
    before navigating back to the Game detail view. EmulatorJS’s **Save State** control
    independently keeps a browser-local fallback.
 6. The Game appears under **Continue Playing**. On the next launch, the Playback
@@ -226,6 +242,20 @@ No-Intro, release-year, and genre catalogs plus the OpenVGDB metadata supplement
 same cache. Hash and title comparisons happen locally. ROM bytes, filenames, and hashes
 are not uploaded to Retronian, Libretro, OpenVGDB, EmulatorJS, or another metadata provider.
 
+## Apple TV development
+
+The generated project is [`apple-tv/HomeGamePortalTV.xcodeproj`](apple-tv/HomeGamePortalTV.xcodeproj).
+See [`apple-tv/README.md`](apple-tv/README.md) for Xcode/TestFlight setup and the current
+native FCEUmm release gate. The checked-in native wire contract is
+[`docs/openapi-v1.yaml`](docs/openapi-v1.yaml).
+The exact implemented-versus-release-blocked inventory is in
+[`docs/apple-tv-build-status.md`](docs/apple-tv-build-status.md).
+
+The Portal Server advertises the candidate shared FCEUmm Checkpoint Format as
+`provisional`. The exact source provenance of the existing EmulatorJS-produced WebAssembly
+core must be proven and its state format tested in both directions before a TestFlight
+build can honestly claim web↔Apple TV resume compatibility.
+
 ## Verification
 
 ```sh
@@ -252,7 +282,8 @@ restart, and new files appear after rescan. No ROM is checked into this reposito
 ## Assumptions and known limitations
 
 - One configured Library Source and one preferred Edition per Game remain intentional
-  current limits. Browser playback is enabled for NES, SNES, and Atari 2600.
+  current limits. Browser playback is enabled for NES, SNES, and Atari 2600. The current
+  native tvOS contract remains NES-only.
 - Player Profiles are household-local and not authenticated. Selecting the Household
   administrator profile grants Metadata Match controls, so this build must remain on a
   trusted LAN until profile PINs or another authorization layer exists.
@@ -353,7 +384,7 @@ EmulatorJS globals.
 The server launch manifest carries Platform identity and Emulator Profile policy
 separately from its web-only runtime fields. A future native Apple TV client can use the
 same Platform capability while supplying its own native Playback Adapter and compatible
-core. It is not required to embed EmulatorJS or honor the browser’s FCEUmm implementation.
+core. It is not required to embed EmulatorJS or honor either browser core implementation.
 This decision is recorded in `docs/adr/0001-client-specific-emulator-adapters.md`;
 runtime-scoped Checkpoint generations are recorded in
 `docs/adr/0002-version-and-scope-checkpoints-by-runtime.md`.
@@ -381,5 +412,5 @@ Metadata Match corrections, automatic provider matching, and persistent artwork 
 are functional. Profile authentication remains hardening/future-scope work.
 
 This iteration extends the server configuration and Emulator Profile foundation with
-Atari 2600 browser playback. It does not claim full Milestone 3 completion: additional
+SNES and Atari 2600 browser playback. It does not claim full Milestone 3 completion: additional
 platforms, firmware management, and native-client implementations remain.

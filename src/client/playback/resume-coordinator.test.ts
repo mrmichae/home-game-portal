@@ -30,6 +30,26 @@ const resumePlan = {
 };
 
 describe("Resume Coordinator module interface", () => {
+  it("keeps a durable saved state when restoration fails", async () => {
+    const rejected: string[] = [];
+    const coordinator = new ResumeCoordinator({
+      capture: async () => undefined,
+      fetchState: async () => new Uint8Array([1]),
+      verify: async () => undefined,
+      reject: async (checkpoint) => { rejected.push(checkpoint.id); },
+    }, (callback) => { callback(0); return 0; }, 2);
+    const plan = { ...resumePlan, checkpoints: [{ ...resumePlan.checkpoints[0], preserveOnFailure: true }] };
+    const gameManager = {
+      getState: () => new Uint8Array([1]),
+      getFrameNum: () => 10,
+      loadState: () => undefined,
+      restart: () => undefined,
+    };
+
+    await expect(coordinator.restore(plan, () => gameManager)).rejects.toThrow("has been kept");
+    expect(rejected).toEqual([]);
+  });
+
   it("does not promote a checkpoint that advances briefly and then freezes", async () => {
     const rejected: string[] = [];
     const verified: string[] = [];

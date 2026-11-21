@@ -36,4 +36,12 @@ describe("deployment configuration", () => {
     vi.stubEnv("PORT", "not-a-port");
     expect(() => loadConfig("/portal")).toThrow("PORT must be an integer between 1 and 65535");
   });
+
+  it("enables Bonjour by default and validates its override", () => {
+    expect(loadConfig("/portal").bonjourEnabled).toBe(true);
+    vi.stubEnv("BONJOUR_ENABLED", "false");
+    expect(loadConfig("/portal").bonjourEnabled).toBe(false);
+    vi.stubEnv("BONJOUR_ENABLED", "sometimes");
+    expect(() => loadConfig("/portal")).toThrow("BONJOUR_ENABLED must be true or false");
+  });
 });

@@ -1,0 +1,4 @@
+module FCEUmmCore {
+    header "FCEUmmBridge.h"
+    export *
+}

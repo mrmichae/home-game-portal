@@ -158,6 +158,65 @@ describe("Versioned Checkpoint Store module interface", () => {
     expect((database.prepare("SELECT COUNT(*) AS count FROM saves").get() as unknown as { count: number }).count).toBe(0);
     database.close();
   });
+
+  it("archives progress for Start New and begins generation one in a new lineage", async () => {
+    const savesRoot = await temporaryDirectory("portal-checkpoint-lineage-");
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource("/roms");
+    catalog.commitScan([
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+    ]);
+    const game = catalog.getGame(catalog.listGames()[0].id)!;
+    const store = new VersionedCheckpointStore(savesRoot, database);
+    const context = {
+      gameId: game.id,
+      editionId: game.editionId,
+      playerKey: "household",
+      romContentHash: "rom-hash",
+      compatibility: { adapterKey: "emulatorjs", coreKey: "fceumm", runtimeVersion: "test-runtime" },
+    };
+    const previous = await store.capture(context, Buffer.from([1]), 10);
+    const lineageId = store.startNewLineage(context, new Date("2026-08-22T11:00:00.000Z"));
+
+    expect(store.listRestorable(context)).toEqual([]);
+    expect(await store.readState(previous.id, context)).toBeNull();
+    const fresh = await store.capture({ ...context, lineageId }, Buffer.from([2]), 20);
+    expect(fresh).toMatchObject({ generation: 1, lineageId });
+    expect((database.prepare("SELECT COUNT(*) AS count FROM checkpoint_lineages WHERE state = 'archived'").get() as unknown as { count: number }).count).toBe(1);
+    database.close();
+  });
+
+  it("records a client-specific failed restore without deleting shared progress", async () => {
+    const savesRoot = await temporaryDirectory("portal-checkpoint-attempt-");
+    const database = openMemoryDatabase(migrationsDir);
+    const catalog = new CatalogRepository(database);
+    catalog.ensureLibrarySource("/roms");
+    catalog.commitScan([
+      { relativePath: "Test Game.nes", displayName: "Test Game", platform: "nes", contentHash: "rom-hash", byteSize: 1, modifiedAtMs: 1 },
+    ]);
+    const game = catalog.getGame(catalog.listGames()[0].id)!;
+    const store = new VersionedCheckpointStore(savesRoot, database);
+    const context = {
+      gameId: game.id,
+      editionId: game.editionId,
+      playerKey: "household",
+      romContentHash: "rom-hash",
+      compatibility: { adapterKey: "emulatorjs", coreKey: "fceumm", runtimeVersion: "test-runtime" },
+    };
+    const checkpoint = await store.capture(context, Buffer.from([1, 2]), 10);
+    expect(store.recordRestoreAttempt(checkpoint.id, context, {
+      deviceId: null,
+      clientVersion: "test-client",
+      outcome: "failed",
+      reason: "Client rejected state",
+    })).toBe(true);
+
+    expect(store.listRestorable(context)).toHaveLength(1);
+    expect(await store.readState(checkpoint.id, context)).toEqual(Buffer.from([1, 2]));
+    expect((database.prepare("SELECT COUNT(*) AS count FROM checkpoint_restore_attempts").get() as unknown as { count: number }).count).toBe(1);
+    database.close();
+  });
 });
 
 async function temporaryDirectory(prefix: string): Promise<string> {

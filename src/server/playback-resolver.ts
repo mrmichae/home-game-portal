@@ -77,6 +77,7 @@ export class PlaybackResolver {
           rejectUrl: `/api/games/${game.id}/checkpoints/${checkpoint.id}/failed?${profileQuery}`,
         })),
       },
+      savedStateCaptureUrl: `/api/games/${game.id}/saved-states?session=${encodeURIComponent(sessionId)}&${profileQuery}`,
       controllerPreset,
       playerProfileKey: playerKey,
     };

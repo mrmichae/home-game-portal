@@ -58,6 +58,8 @@ interface EmulatorWindow extends Window {
     Module?: { AL?: { currentCtx?: { audioCtx?: { state: string; resume: () => Promise<void> } } } };
     callEvent?: (event: string) => void;
     gameManager?: EmulatorGameManager;
+    pause?: () => void;
+    play?: () => void;
     paused?: boolean;
   };
   EJS_Runtime?: (options?: RuntimeOptions) => unknown;
@@ -66,6 +68,9 @@ interface EmulatorWindow extends Window {
 export interface PlaybackAdapter {
   mount(manifest: LaunchManifest, callbacks: PlaybackCallbacks): () => void;
   save(): Promise<void>;
+  pause(): void;
+  resume(): void;
+  captureSavedState(): Promise<{ state: Uint8Array; capturedFrame: number; thumbnail: Blob | null }>;
 }
 
 export interface RuntimeProfile {
@@ -140,7 +145,7 @@ function fourPlayerMapping(playerOne: EmulatorDefaultControls[0]): EmulatorDefau
 interface CheckpointGatedStartOptions {
   restore: () => Promise<RestoreResult>;
   onRestoreResult: (result: RestoreResult) => void;
-  onRestoreError: () => void;
+  onRestoreError: (error: unknown) => void;
   onRunning: () => void;
   isDisposed: () => boolean;
 }
@@ -187,8 +192,8 @@ export function createCheckpointGatedStartHandler(options: CheckpointGatedStartO
       .then((result) => {
         if (!options.isDisposed()) options.onRestoreResult(result);
       })
-      .catch(() => {
-        if (!options.isDisposed()) options.onRestoreError();
+      .catch((error: unknown) => {
+        if (!options.isDisposed()) options.onRestoreError(error);
       })
       .finally(() => {
         if (!options.isDisposed()) options.onRunning();
@@ -227,6 +232,27 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
 
   save(): Promise<void> {
     return this.saveCurrentState?.() ?? Promise.reject(new Error("The game is not ready to save."));
+  }
+
+  pause(): void {
+    (window as EmulatorWindow).EJS_emulator?.pause?.();
+  }
+
+  resume(): void {
+    (window as EmulatorWindow).EJS_emulator?.play?.();
+  }
+
+  async captureSavedState(): Promise<{ state: Uint8Array; capturedFrame: number; thumbnail: Blob | null }> {
+    const gameManager = resumableGameManager((window as EmulatorWindow).EJS_emulator?.gameManager);
+    if (!gameManager) throw new Error("The game is not ready to create a saved state.");
+    const capturedFrame = gameManager.getFrameNum();
+    const state = gameManager.getState().slice();
+    if (!state.byteLength || !Number.isSafeInteger(capturedFrame) || capturedFrame < 0) {
+      throw new Error("The game did not provide a valid saved state.");
+    }
+    const canvas = document.querySelector<HTMLCanvasElement>("#game canvas");
+    const thumbnail = canvas ? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82)) : null;
+    return { state, capturedFrame, thumbnail };
   }
 
   mount(manifest: LaunchManifest, callbacks: PlaybackCallbacks): () => void {
@@ -294,7 +320,10 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
         if (result.status === "restored") callbacks.onSaveStatus("loaded");
         if (result.status === "fresh") callbacks.onSaveStatus("fresh");
       },
-      onRestoreError: () => callbacks.onSaveStatus("error"),
+      onRestoreError: (error) => {
+        callbacks.onSaveStatus("error");
+        callbacks.onError(error instanceof Error ? error.message : "That saved state could not be loaded.");
+      },
       onRunning: () => {
         running = true;
         this.saveCurrentState = async () => {
@@ -362,7 +391,6 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
     };
     const audioGestures = ["pointerdown", "pointerup", "touchend", "click", "keydown"];
     for (const event of audioGestures) gameElement?.addEventListener(event, resumeAudio, { capture: true, passive: true });
-
 
     const runtimeScript = document.createElement("script");
     runtimeScript.src = `${runtimeProfile.scriptPath}?v=${emulatorJsAssetVersion}`;
@@ -481,25 +509,6 @@ export function selectRuntimeProfile(environment: {
   };
 }
 
-function isAppleWebKit(environment: {
-  userAgent?: string;
-  vendor?: string;
-  platform?: string;
-  maxTouchPoints?: number;
-}): boolean {
-  const userAgent = environment.userAgent ?? "";
-  const isAppleMobile = /iPad|iPhone|iPod/i.test(userAgent)
-    || (environment.platform === "MacIntel" && (environment.maxTouchPoints ?? 0) > 1);
-  const isDesktopSafari = /Safari/i.test(userAgent)
-    && /Apple/i.test(environment.vendor ?? "")
-    && !/(Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|FxiOS)/i.test(userAgent);
-
-  // WebKit can retain or over-count SharedArrayBuffer-backed Wasm memory across
-  // workers and reloads. FCEUmm is fast enough without pthreads on Apple devices,
-  // so prefer its lower-overhead single-thread runtime there.
-  return isAppleMobile || isDesktopSafari;
-}
-
 function isValidSnesRom(bytes: Uint8Array): boolean {
   const copierHeaderSize = bytes.byteLength % 0x8000 === 512 ? 512 : 0;
   return [0x7fc0, 0xffc0, 0x40ffc0].some((baseOffset) => {
@@ -532,6 +541,25 @@ function platformDisplayName(platform: PlatformKey): string {
   if (platform === "snes") return "Super Nintendo";
   if (platform === "atari2600") return "Atari 2600";
   return "NES";
+}
+
+function isAppleWebKit(environment: {
+  userAgent?: string;
+  vendor?: string;
+  platform?: string;
+  maxTouchPoints?: number;
+}): boolean {
+  const userAgent = environment.userAgent ?? "";
+  const isAppleMobile = /iPad|iPhone|iPod/i.test(userAgent)
+    || (environment.platform === "MacIntel" && (environment.maxTouchPoints ?? 0) > 1);
+  const isDesktopSafari = /Safari/i.test(userAgent)
+    && /Apple/i.test(environment.vendor ?? "")
+    && !/(Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|FxiOS)/i.test(userAgent);
+
+  // WebKit can retain or over-count SharedArrayBuffer-backed Wasm memory across
+  // workers and reloads. FCEUmm is fast enough without pthreads on Apple devices,
+  // so prefer its lower-overhead single-thread runtime there.
+  return isAppleMobile || isDesktopSafari;
 }
 
 function playerMessage(reason: unknown): string {

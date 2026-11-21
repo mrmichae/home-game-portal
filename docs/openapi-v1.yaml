@@ -1,0 +1,248 @@
+openapi: 3.1.0
+info:
+  title: Home Game Portal native client API
+  version: 0.1.0
+  description: LAN-only v1 contract for paired native clients. Browser routes are outside this contract.
+servers:
+  - url: /api/v1
+security:
+  - deviceCredential: []
+paths:
+  /system:
+    get:
+      security: []
+      operationId: getSystem
+      responses:
+        "200":
+          description: Stable Portal Server identity and capabilities
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/System" }
+  /pairings:
+    post:
+      security: []
+      operationId: createPairing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceName, appVersion, credentialDigest]
+              properties:
+                deviceName: { type: string, maxLength: 80 }
+                appVersion: { type: string, maxLength: 40 }
+                credentialDigest: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "201": { description: Pairing Request created }
+        "400": { $ref: "#/components/responses/Error" }
+  /pairings/{pairingId}:
+    parameters:
+      - $ref: "#/components/parameters/PairingId"
+    get:
+      security:
+        - pairingSecret: []
+      operationId: getPairing
+      responses:
+        "200": { description: Pairing state }
+        "404": { $ref: "#/components/responses/Error" }
+  /profiles:
+    get:
+      operationId: listProfiles
+      responses:
+        "200": { description: Existing Player Profiles }
+        "401": { $ref: "#/components/responses/Error" }
+  /catalog:
+    get:
+      operationId: getCatalog
+      parameters:
+        - $ref: "#/components/parameters/ProfileKey"
+      responses:
+        "200": { description: Profile-scoped catalog, shelves, and presentation }
+        "304": { description: Not modified }
+        "401": { $ref: "#/components/responses/Error" }
+  /games/{gameId}:
+    parameters:
+      - $ref: "#/components/parameters/GameId"
+      - $ref: "#/components/parameters/ProfileKey"
+    get:
+      operationId: getGame
+      responses:
+        "200": { description: Profile-scoped Game details }
+        "404": { $ref: "#/components/responses/Error" }
+  /games/{gameId}/favorite:
+    parameters:
+      - $ref: "#/components/parameters/GameId"
+      - $ref: "#/components/parameters/ProfileKey"
+    put:
+      operationId: updateFavorite
+      responses:
+        "200": { description: Updated Game }
+        "404": { $ref: "#/components/responses/Error" }
+  /games/{gameId}/continue-playing:
+    parameters:
+      - $ref: "#/components/parameters/GameId"
+      - $ref: "#/components/parameters/ProfileKey"
+    delete:
+      operationId: dismissContinuePlaying
+      responses:
+        "200": { description: Updated Game }
+        "404": { $ref: "#/components/responses/Error" }
+  /games/{gameId}/playback-leases:
+    parameters:
+      - $ref: "#/components/parameters/GameId"
+      - $ref: "#/components/parameters/ProfileKey"
+    post:
+      operationId: acquirePlaybackLease
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [intent]
+              properties:
+                intent: { type: string, enum: [resume, fresh] }
+      responses:
+        "201":
+          description: Playback Lease and scoped grants
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlaybackManifest" }
+        "409": { $ref: "#/components/responses/Error" }
+  /playback-grants/{grantId}/game:
+    get:
+      operationId: downloadGameFile
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: NES Game File
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/Error" }
+  /playback-leases/{leaseId}/renew:
+    post:
+      operationId: renewPlaybackLease
+      parameters:
+        - $ref: "#/components/parameters/LeaseId"
+      responses:
+        "200": { description: Renewed lease and control events }
+        "409": { $ref: "#/components/responses/Error" }
+  /playback-leases/{leaseId}/takeover:
+    post:
+      operationId: takeoverPlaybackLease
+      parameters:
+        - $ref: "#/components/parameters/LeaseId"
+      responses:
+        "201": { description: Replacement Playback Lease and grants }
+        "409": { $ref: "#/components/responses/Error" }
+  /playback-leases/{leaseId}:
+    delete:
+      operationId: releasePlaybackLease
+      parameters:
+        - $ref: "#/components/parameters/LeaseId"
+        - $ref: "#/components/parameters/LeaseRevision"
+      responses:
+        "204": { description: Released }
+        "409": { $ref: "#/components/responses/Error" }
+  /playback-leases/{leaseId}/checkpoints:
+    post:
+      operationId: publishCheckpoint
+      parameters:
+        - $ref: "#/components/parameters/LeaseId"
+        - $ref: "#/components/parameters/LeaseRevision"
+        - name: X-Captured-Frame
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary, maxLength: 12582912 }
+      responses:
+        "201": { description: Immutable Checkpoint accepted }
+        "409": { $ref: "#/components/responses/Error" }
+  /checkpoints/{checkpointId}:
+    get:
+      operationId: downloadCheckpoint
+      parameters:
+        - $ref: "#/components/parameters/CheckpointId"
+        - $ref: "#/components/parameters/ProfileKey"
+      responses:
+        "200":
+          description: Compatible Checkpoint bytes
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/Error" }
+  /checkpoints/{checkpointId}/restore-attempts:
+    post:
+      operationId: recordRestoreAttempt
+      parameters:
+        - $ref: "#/components/parameters/CheckpointId"
+        - $ref: "#/components/parameters/ProfileKey"
+      responses:
+        "201": { description: Client-specific attempt recorded }
+        "404": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    deviceCredential:
+      type: http
+      scheme: bearer
+    pairingSecret:
+      type: apiKey
+      in: header
+      name: Authorization
+  parameters:
+    PairingId: { name: pairingId, in: path, required: true, schema: { type: string, format: uuid } }
+    GameId: { name: gameId, in: path, required: true, schema: { type: string } }
+    LeaseId: { name: leaseId, in: path, required: true, schema: { type: string, format: uuid } }
+    CheckpointId: { name: checkpointId, in: path, required: true, schema: { type: string } }
+    ProfileKey: { name: profileKey, in: query, required: true, schema: { type: string } }
+    LeaseRevision: { name: X-Lease-Revision, in: header, required: true, schema: { type: integer, minimum: 1 } }
+  responses:
+    Error:
+      description: Stable API error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable, details]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            retryable: { type: boolean }
+            details: { type: object, additionalProperties: true }
+    System:
+      type: object
+      required: [serverId, serverName, serverVersion, apiVersions, minimumClientVersion, pairingRequired, transport, capabilities]
+      properties:
+        serverId: { type: string, format: uuid }
+        serverName: { type: string }
+        serverVersion: { type: string }
+        apiVersions: { type: array, items: { type: string } }
+        minimumClientVersion: { type: string }
+        pairingRequired: { type: boolean }
+        transport: { type: object, additionalProperties: true }
+        capabilities: { type: object, additionalProperties: true }
+    PlaybackManifest:
+      type: object
+      required: [lease, game, gameFile, emulator, intent, checkpoints, checkpointUpload]
+      properties:
+        lease: { type: object, additionalProperties: true }
+        game: { type: object, additionalProperties: true }
+        gameFile: { type: object, additionalProperties: true }
+        emulator: { type: object, additionalProperties: true }
+        intent: { type: string, enum: [resume, fresh] }
+        checkpoints: { type: array, items: { type: object, additionalProperties: true } }
+        checkpointUpload: { type: object, additionalProperties: true }
