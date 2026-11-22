@@ -174,6 +174,20 @@ code { font-size: .92em; }
 .pause-overlay > p:not(.eyebrow) { max-width: 560px; color: #b0b2b9; line-height: 1.5; }
 .pause-actions { margin-top: 22px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 .pause-message { padding: 10px 14px; border-radius: 6px; background: rgba(255,255,255,.08); color: #f0f1f3 !important; font-size: 12px; }
+.pause-saved-states { width: min(920px, 100%); margin-top: 26px; text-align: left; }
+.pause-saved-states-heading { margin-bottom: 10px; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.pause-saved-states-heading strong { font-size: 15px; }
+.pause-saved-states-heading span { color: #9497a0; font-size: 10px; }
+.pause-saved-states-row { display: flex; gap: 11px; overflow-x: auto; padding: 2px 2px 12px; scroll-snap-type: x proximity; }
+.pause-saved-state { flex: 0 0 190px; padding: 0 0 10px; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 7px; background: rgba(255,255,255,.06); color: #fff; text-align: left; cursor: pointer; scroll-snap-align: start; }
+.pause-saved-state:hover, .pause-saved-state:focus-visible { border-color: rgba(255,255,255,.55); background: rgba(255,255,255,.12); outline: 2px solid var(--accent); outline-offset: 2px; }
+.pause-saved-state:disabled { opacity: .6; cursor: wait; }
+.pause-saved-state-thumbnail { width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; background: #15171d; color: #777b85; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.pause-saved-state-thumbnail img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.pause-saved-state strong, .pause-saved-state small { display: block; padding-inline: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pause-saved-state strong { margin-top: 9px; font-size: 12px; }
+.pause-saved-state small { margin-top: 4px; color: #9da0a8; font-size: 9px; }
+.pause-saved-states-status { margin: 0; padding: 18px; border: 1px dashed rgba(255,255,255,.14); border-radius: 7px; color: #9497a0 !important; text-align: center; font-size: 11px; }
 .error-pixel { width: 54px; height: 54px; display: grid; place-items: center; border: 3px solid var(--red-bright); color: var(--red-bright); font-size: 31px; font-weight: 900; }
 .eyebrow { margin: 0; color: var(--red-bright); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; font-weight: 850; }
 .primary-button { min-height: 44px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; background: var(--red); color: #fff; font-weight: 800; }

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import type { LaunchManifest } from "../../domain/types";
+import type { LaunchManifest, SavedState } from "../../domain/types";
 import { api } from "../api";
 import { Spinner } from "../components";
 import { gameplayChromeVisibility, isDeliberateVerticalSwipe, isDeliberateVerticalWheel, type GesturePoint } from "../gameplay-chrome";
 import { EmulatorJsPlaybackAdapter } from "../playback/emulator-js-adapter";
+import { advanceSavedStateShortcut, type ShortcutHoldState } from "../playback/saved-state-shortcut";
 
 type PlayerStatus = "preparing" | "loading" | "running" | "error";
 type SaveStatus = "idle" | "loaded" | "fresh" | "syncing" | "saved" | "error";
@@ -21,6 +22,9 @@ export function PlayerPage(): React.JSX.Element {
   const [chromeVisible, setChromeVisible] = useState(true);
   const [paused, setPaused] = useState(false);
   const [savingSavedState, setSavingSavedState] = useState(false);
+  const [savedStates, setSavedStates] = useState<SavedState[]>([]);
+  const [loadingSavedStates, setLoadingSavedStates] = useState(false);
+  const [loadingSavedStateId, setLoadingSavedStateId] = useState<string | null>(null);
   const [pauseMessage, setPauseMessage] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const failed = useRef(false);
@@ -81,13 +85,20 @@ export function PlayerPage(): React.JSX.Element {
     setPauseMessage(null);
     try {
       const capture = await adapter.captureSavedState();
-      await api.createSavedState(manifest.savedStateCaptureUrl, capture.state, capture.capturedFrame, capture.thumbnail);
+      const savedState = await api.createSavedState(manifest.savedStateCaptureUrl, capture.state, capture.capturedFrame, capture.thumbnail);
+      setSavedStates((current) => [savedState, ...current.filter((item) => item.id !== savedState.id)]);
       setPauseMessage("Saved state created. It is now available from this game's detail page.");
     } catch (error) {
       setPauseMessage(error instanceof Error ? error.message : "The saved state could not be created.");
     } finally {
       setSavingSavedState(false);
     }
+  };
+
+  const loadSavedState = (savedStateId: string) => {
+    if (loadingSavedStateId) return;
+    setLoadingSavedStateId(savedStateId);
+    window.location.assign(`/play/${gameId}?savedState=${encodeURIComponent(savedStateId)}`);
   };
 
   const focusPlayer = () => document.querySelector<HTMLElement>("#game")?.focus({ preventScroll: true });
@@ -158,6 +169,56 @@ export function PlayerPage(): React.JSX.Element {
     return clearChromeTimer;
   }, [paused, status]);
 
+  useEffect(() => {
+    if (!paused || !gameId) return;
+    let cancelled = false;
+    setLoadingSavedStates(true);
+    void api.savedStates(gameId)
+      .then(({ savedStates: found }) => { if (!cancelled) setSavedStates(found); })
+      .catch((error: unknown) => {
+        if (!cancelled) setPauseMessage(error instanceof Error ? error.message : "Saved states could not be loaded.");
+      })
+      .finally(() => { if (!cancelled) setLoadingSavedStates(false); });
+    return () => { cancelled = true; };
+  }, [gameId, paused]);
+
+  useEffect(() => {
+    if (status !== "running") return;
+    let frame = 0;
+    let shortcut: ShortcutHoldState = { pressedAt: null, triggered: false };
+    let lastMenuInputAt = 0;
+    const moveMenuFocus = (direction: -1 | 1) => {
+      const targets = Array.from(document.querySelectorAll<HTMLElement>(".pause-overlay [data-controller-target]"))
+        .filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
+      if (!targets.length) return;
+      const current = targets.indexOf(document.activeElement as HTMLElement);
+      targets[current < 0 ? 0 : (current + direction + targets.length) % targets.length]?.focus();
+    };
+    const poll = () => {
+      const gamepad = navigator.getGamepads?.().find(Boolean);
+      const now = performance.now();
+      if (gamepad && !paused) {
+        const result = advanceSavedStateShortcut(shortcut, Boolean(gamepad.buttons[4]?.pressed && gamepad.buttons[5]?.pressed), now);
+        shortcut = result.state;
+        if (result.trigger) pausePlayer();
+      } else if (gamepad && paused && now - lastMenuInputAt > 230) {
+        if (gamepad.buttons[14]?.pressed || gamepad.buttons[12]?.pressed || gamepad.axes[0] < -0.55 || gamepad.axes[1] < -0.55) {
+          moveMenuFocus(-1);
+          lastMenuInputAt = now;
+        } else if (gamepad.buttons[15]?.pressed || gamepad.buttons[13]?.pressed || gamepad.axes[0] > 0.55 || gamepad.axes[1] > 0.55) {
+          moveMenuFocus(1);
+          lastMenuInputAt = now;
+        } else if (gamepad.buttons[0]?.pressed) {
+          (document.activeElement as HTMLElement | null)?.click();
+          lastMenuInputAt = now;
+        }
+      }
+      frame = requestAnimationFrame(poll);
+    };
+    frame = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(frame);
+  }, [paused, status]);
+
   return (
     <main className={`player-page player-chrome-${chromeVisible ? "visible" : "hidden"}`}>
       {chromeVisible && <header className="player-topbar">
@@ -199,12 +260,35 @@ export function PlayerPage(): React.JSX.Element {
           <div className="pause-overlay" role="dialog" aria-modal="true" aria-labelledby="pause-title">
             <p className="eyebrow">Game paused</p>
             <h1 id="pause-title">{manifest?.gameName}</h1>
-            <p>Create a durable saved state at this exact moment, or resume when you’re ready.</p>
+            <p>Create a durable saved state, load an earlier moment, or resume when you’re ready.</p>
             <div className="pause-actions">
               <button type="button" className="stream-button primary" onClick={resumePlayer} autoFocus data-controller-target>Resume</button>
               <button type="button" className="stream-button secondary" onClick={() => void createSavedState()} disabled={savingSavedState} data-controller-target>{savingSavedState ? "Saving…" : "Save State"}</button>
               <button type="button" className="stream-button secondary" onClick={() => void leavePlayer()} disabled={leaving} data-controller-target>Return to Game Details</button>
             </div>
+            <section className="pause-saved-states" aria-label="Saved states">
+              <div className="pause-saved-states-heading"><strong>Load a Saved State</strong><span>Hold L + R during play to open this menu</span></div>
+              {loadingSavedStates ? <p className="pause-saved-states-status">Loading saved states…</p> : savedStates.length ? (
+                <div className="pause-saved-states-row">
+                  {savedStates.map((savedState) => (
+                    <button
+                      type="button"
+                      className="pause-saved-state"
+                      key={savedState.id}
+                      onClick={() => loadSavedState(savedState.id)}
+                      disabled={Boolean(loadingSavedStateId)}
+                      data-controller-target
+                    >
+                      <span className="pause-saved-state-thumbnail">
+                        {savedState.thumbnailUrl ? <img src={savedState.thumbnailUrl} alt="" /> : <span>No preview</span>}
+                      </span>
+                      <strong>{savedState.label || formatSavedStateDate(savedState.createdAt)}</strong>
+                      <small>{loadingSavedStateId === savedState.id ? "Loading…" : formatSavedStateTime(savedState.createdAt)}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : <p className="pause-saved-states-status">No saved states yet. Create one above.</p>}
+            </section>
             {pauseMessage && <p className="pause-message" role="status">{pauseMessage}</p>}
           </div>
         )}
@@ -215,6 +299,14 @@ export function PlayerPage(): React.JSX.Element {
       </footer>}
     </main>
   );
+}
+
+function formatSavedStateDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}
+
+function formatSavedStateTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
 function SaveIndicator({ status, hasExistingSave }: { status: SaveStatus; hasExistingSave: boolean }): React.JSX.Element {
