@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   PlaybackExitCoordinator,
+  captureEmulatorThumbnail,
   controllerMappingFor,
   createCheckpointGatedStartHandler,
   disableImplicitCoreRestart,
@@ -13,6 +14,34 @@ import {
   resolveFceummRuntimeFile,
   selectRuntimeProfile,
 } from "./emulator-js-adapter";
+
+describe("saved-state thumbnails", () => {
+  it("uses the emulator framebuffer instead of the cleared WebGL canvas", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const screenshot = vi.fn(async () => png);
+    const blankCanvas = {
+      toBlob: (callback: BlobCallback) => callback(new Blob([new Uint8Array(32)], { type: "image/webp" })),
+    };
+
+    const thumbnail = await captureEmulatorThumbnail({ screenshot }, blankCanvas);
+
+    expect(screenshot).toHaveBeenCalledOnce();
+    expect(thumbnail?.type).toBe("image/png");
+    expect(new Uint8Array(await thumbnail!.arrayBuffer())).toEqual(png);
+  });
+
+  it("falls back to the canvas when the emulator cannot capture a framebuffer", async () => {
+    const webp = new Blob([new Uint8Array([4, 5, 6])], { type: "image/webp" });
+    const canvas = { toBlob: (callback: BlobCallback) => callback(webp) };
+    const consoleWarning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const thumbnail = await captureEmulatorThumbnail({ screenshot: async () => { throw new Error("unsupported"); } }, canvas);
+
+    expect(thumbnail).toBe(webp);
+    expect(consoleWarning).toHaveBeenCalledOnce();
+    consoleWarning.mockRestore();
+  });
+});
 
 describe("FCEUmm runtime asset resolution", () => {
   it("bypasses an invalid archive-worker result for the WebAssembly binary", () => {

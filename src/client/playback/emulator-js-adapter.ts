@@ -24,6 +24,30 @@ interface EmulatorGameManager {
   getFrameNum?: () => number;
   loadState?: (state: Uint8Array) => void;
   restart?: () => void;
+  screenshot?: () => Promise<Uint8Array>;
+}
+
+interface ThumbnailCanvas {
+  toBlob(callback: BlobCallback, type?: string, quality?: number): void;
+}
+
+export async function captureEmulatorThumbnail(
+  gameManager: EmulatorGameManager,
+  canvas: ThumbnailCanvas | null,
+): Promise<Blob | null> {
+  if (gameManager.screenshot) {
+    try {
+      const png = await gameManager.screenshot();
+      if (png.byteLength) {
+        return new Blob([png.slice().buffer as ArrayBuffer], { type: "image/png" });
+      }
+    } catch (error) {
+      console.warn("[Home Game Portal] Emulator screenshot capture failed; using the canvas fallback", error);
+    }
+  }
+  return canvas
+    ? new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82))
+    : null;
 }
 
 interface EmulatorWindow extends Window {
@@ -243,7 +267,8 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
   }
 
   async captureSavedState(): Promise<{ state: Uint8Array; capturedFrame: number; thumbnail: Blob | null }> {
-    const gameManager = resumableGameManager((window as EmulatorWindow).EJS_emulator?.gameManager);
+    const emulatorGameManager = (window as EmulatorWindow).EJS_emulator?.gameManager;
+    const gameManager = resumableGameManager(emulatorGameManager);
     if (!gameManager) throw new Error("The game is not ready to create a saved state.");
     const capturedFrame = gameManager.getFrameNum();
     const state = gameManager.getState().slice();
@@ -251,7 +276,7 @@ export class EmulatorJsPlaybackAdapter implements PlaybackAdapter {
       throw new Error("The game did not provide a valid saved state.");
     }
     const canvas = document.querySelector<HTMLCanvasElement>("#game canvas");
-    const thumbnail = canvas ? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82)) : null;
+    const thumbnail = await captureEmulatorThumbnail(emulatorGameManager ?? {}, canvas);
     return { state, capturedFrame, thumbnail };
   }
 
